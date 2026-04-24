@@ -9,6 +9,21 @@
 
   const IS_ELECTRON = typeof window.electronAPI !== 'undefined';
 
+  // Escape HTML-significant chars so user-controlled strings (URLs the user
+  // configured, HTTP status-text returned by a hostile origin, block-signature
+  // entries, imported-config values) cannot break out of the surrounding HTML
+  // context when interpolated into innerHTML templates. Same helper covers
+  // attribute contexts like title="${…}" because " and ' are escaped too.
+  function escapeHtml(v) {
+    if (v === null || v === undefined) return '';
+    return String(v)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   let BUILD_INFO = { version: '?', commit: '?', built: '?', branch: '—' };
   async function loadBuildInfo() {
     try {
@@ -444,6 +459,125 @@
   // CONFIG — load / save / merge
   // ─────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────
+  // CONFIG SANITISATION — loaded/imported config is untrusted input.
+  // We never Object.assign raw JSON into state: we copy whitelisted keys
+  // with expected types, skip __proto__/constructor/prototype, and
+  // reject URL entries whose string can't be parsed as http(s).
+  // ─────────────────────────────────────────────────────────────────
+
+  const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+  // True if s is a well-formed http or https URL, with or without the scheme.
+  // The app already prefixes `https://` if a URL doesn't start with "http",
+  // so we treat both forms as acceptable and reject anything else.
+  function isSafeUrlString(s) {
+    if (typeof s !== 'string') return false;
+    const candidate = /^https?:\/\//i.test(s) ? s : 'https://' + s;
+    try {
+      const u = new URL(candidate);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch { return false; }
+  }
+
+  // Normalise a urls entry. Accepts `"example.com/"` or `{ url, stream }`.
+  // Returns null for anything else (prototype-polluting keys, non-http URLs,
+  // numeric/array/null entries) so the caller can filter it out.
+  function sanitiseUrlEntry(entry) {
+    if (typeof entry === 'string') {
+      return isSafeUrlString(entry) ? entry : null;
+    }
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const url = typeof entry.url === 'string' ? entry.url : '';
+      if (!isSafeUrlString(url)) return null;
+      const out = { url };
+      if (typeof entry.stream === 'boolean') out.stream = entry.stream;
+      return out;
+    }
+    return null;
+  }
+
+  // Merge `src` into `dest` for a single category, copying only the
+  // whitelisted fields with the expected types.
+  function mergeCategory(dest, src) {
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return;
+    if (typeof src.enabled === 'boolean') dest.enabled = src.enabled;
+    if (typeof src.speed === 'string' && ['slow','medium','fast'].includes(src.speed)) dest.speed = src.speed;
+    if (typeof src.mode === 'string' && ['http','browser','mixed'].includes(src.mode)) dest.mode = src.mode;
+    if (typeof src.streamDuration === 'number' && isFinite(src.streamDuration) && src.streamDuration > 0) {
+      dest.streamDuration = Math.min(600, src.streamDuration);
+    }
+    if (Array.isArray(src.urls)) {
+      dest.urls = src.urls.map(sanitiseUrlEntry).filter(Boolean);
+    }
+  }
+
+  // Merge attack vector config (ports/urls/target/enabled) safely.
+  function mergeAttackVector(dest, src) {
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return;
+    if (typeof src.enabled === 'boolean') dest.enabled = src.enabled;
+    if (typeof src.target === 'string') {
+      // Hostnames/IPs only — cap length and reject obvious junk. The actual
+      // TCP connect is done in main.js via net.Socket which won't interpret
+      // shell metacharacters, but keeping this tight is cheap.
+      const t = src.target.trim().slice(0, 253);
+      if (/^[a-zA-Z0-9.\-:_]+$/.test(t)) dest.target = t;
+    }
+    if (Array.isArray(src.ports)) {
+      dest.ports = src.ports
+        .map(p => parseInt(p, 10))
+        .filter(p => Number.isFinite(p) && p > 0 && p < 65536)
+        .slice(0, 256);
+    }
+    if (Array.isArray(src.urls)) {
+      dest.urls = src.urls
+        .map(u => (typeof u === 'string' && isSafeUrlString(u)) ? u : null)
+        .filter(Boolean);
+    }
+  }
+
+  // Top-level merge used by both loadConfig() and the IMPORT JSON path.
+  // Never assigns raw `src` objects into `state.config` — only known keys
+  // copied across, so __proto__/constructor payloads in the JSON are
+  // silently ignored.
+  function mergeSavedConfig(saved) {
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+
+    if (saved.categories && typeof saved.categories === 'object' && !Array.isArray(saved.categories)) {
+      Object.keys(saved.categories).forEach(k => {
+        if (UNSAFE_KEYS.has(k)) return;
+        if (state.config.categories[k]) {
+          mergeCategory(state.config.categories[k], saved.categories[k]);
+        }
+      });
+    }
+
+    if (saved.settings && typeof saved.settings === 'object' && !Array.isArray(saved.settings)) {
+      const s = saved.settings;
+      if (typeof s.timeout === 'number' && isFinite(s.timeout) && s.timeout > 0) {
+        state.config.settings.timeout = Math.min(300, Math.max(1, Math.floor(s.timeout)));
+      }
+      if (typeof s.crawlDepth === 'number' && isFinite(s.crawlDepth) && s.crawlDepth > 0) {
+        state.config.settings.crawlDepth = Math.min(10, Math.max(1, Math.floor(s.crawlDepth)));
+      }
+      if (Array.isArray(s.blockSignatures)) {
+        state.config.settings.blockSignatures = s.blockSignatures
+          .filter(x => typeof x === 'string' && x.length > 0 && x.length < 200)
+          .slice(0, 64);
+      }
+
+      // Attack: reject the legacy flat-boolean format outright (defaults stay).
+      if (s.attack && typeof s.attack === 'object' && !Array.isArray(s.attack) && typeof s.attack.portScan !== 'boolean') {
+        Object.keys(s.attack).forEach(k => {
+          if (UNSAFE_KEYS.has(k)) return;
+          if (state.config.settings.attack[k]) {
+            mergeAttackVector(state.config.settings.attack[k], s.attack[k]);
+          }
+        });
+      }
+    }
+  }
+
   function defaultStats() {
     const s = {};
     const zero = () => ({ sent: 0, ok: 0, cha: 0, wrn: 0, blk: 0, err: 0, txBytes: 0, rxBytes: 0 });
@@ -464,32 +598,9 @@
     // Always start from a clean copy of defaults
     state.config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 
-    if (saved) {
-      if (saved.categories) {
-        Object.keys(saved.categories).forEach(k => {
-          if (state.config.categories[k]) {
-            Object.assign(state.config.categories[k], saved.categories[k]);
-          }
-        });
-      }
-      if (saved.settings) {
-        // Shallow-merge top-level settings keys except attack (needs special handling)
-        const { attack: savedAttack, ...otherSettings } = saved.settings;
-        Object.assign(state.config.settings, otherSettings);
-
-        // Migrate attack config: old format had flat booleans { portScan: true, ... }
-        // New format has nested objects { portScan: { enabled, target, ports }, ... }
-        if (savedAttack && typeof savedAttack.portScan !== 'boolean') {
-          // New nested format — deep-merge each vector
-          Object.keys(savedAttack).forEach(k => {
-            if (state.config.settings.attack[k] && typeof savedAttack[k] === 'object') {
-              Object.assign(state.config.settings.attack[k], savedAttack[k]);
-            }
-          });
-        }
-        // Old flat format is simply discarded — defaults are already in place
-      }
-    }
+    // Loaded/persisted config is treated as untrusted — mergeSavedConfig
+    // copies only known keys with expected types, rejects __proto__ etc.
+    mergeSavedConfig(saved);
   }
 
   async function saveConfig() {
@@ -626,13 +737,13 @@
     if (!visible) tr.style.display = 'none';
 
     tr.innerHTML = `
-      <td class="td-time">${evt.timeStr}</td>
-      <td class="td-cat cat-${evt.category}">${state.config.categories[evt.category]?.short || evt.category.toUpperCase()}</td>
-      <td class="td-status ${oc}">${statusLabel(evt.outcome)}</td>
-      <td class="td-mode">${evt.mode.toUpperCase()}</td>
-      <td class="td-code ${codeClass}">${codeStr}</td>
-      <td class="td-url" title="${evt.url}">${evt.url}</td>
-      <td class="td-response ${oc}">${evt.response || ''}</td>
+      <td class="td-time">${escapeHtml(evt.timeStr)}</td>
+      <td class="td-cat cat-${evt.category}">${escapeHtml(state.config.categories[evt.category]?.short || evt.category.toUpperCase())}</td>
+      <td class="td-status ${oc}">${escapeHtml(statusLabel(evt.outcome))}</td>
+      <td class="td-mode">${escapeHtml(evt.mode.toUpperCase())}</td>
+      <td class="td-code ${codeClass}">${escapeHtml(codeStr)}</td>
+      <td class="td-url" title="${escapeHtml(evt.url)}">${escapeHtml(evt.url)}</td>
+      <td class="td-response ${oc}">${escapeHtml(evt.response || '')}</td>
     `;
 
     if (prepend && tbody.firstChild) {
@@ -872,9 +983,9 @@
     const labelByType = { scan: 'PORT SCAN', eicar: 'EICAR', c2: 'C2 / MALWARE' };
     const prefix = labelByType[evt.vectorType] || 'ATTACK';
     row.innerHTML = `
-      <span class="aml-time">${evt.timeStr}</span>
-      <span class="aml-status ${outcomeClass(evt.outcome)}">${statusLabel(evt.outcome)}</span>
-      <span class="aml-desc">${prefix}: ${evt.description || evt.url} ${evt.response ? ' — ' + evt.response : ''}</span>
+      <span class="aml-time">${escapeHtml(evt.timeStr)}</span>
+      <span class="aml-status ${outcomeClass(evt.outcome)}">${escapeHtml(statusLabel(evt.outcome))}</span>
+      <span class="aml-desc">${escapeHtml(prefix)}: ${escapeHtml(evt.description || evt.url)} ${evt.response ? ' — ' + escapeHtml(evt.response) : ''}</span>
     `;
     container.appendChild(row);
     container.scrollTop = container.scrollHeight;
@@ -1259,7 +1370,7 @@
     state.config.settings.blockSignatures.forEach((sig, i) => {
       const tag = document.createElement('div');
       tag.className = 'sig-tag';
-      tag.innerHTML = `<span>${sig}</span><button class="sig-tag-del" data-i="${i}">×</button>`;
+      tag.innerHTML = `<span>${escapeHtml(sig)}</span><button class="sig-tag-del" data-i="${i}">×</button>`;
       tag.querySelector('.sig-tag-del').addEventListener('click', () => {
         state.config.settings.blockSignatures.splice(i, 1);
         renderBlockSigTags();
@@ -1294,13 +1405,13 @@
         `<span class="scard-toggle ${enabled ? 'on' : ''}" style="color:var(${cat.cssVar})" aria-hidden="true"></span>`;
 
       // Non-totals title is a <button> so the whole toggle+name is a single label target
-      const titleOpen  = isTotals ? `<div class="scard-title">` : `<button type="button" class="scard-title scard-title-btn" data-cat-id="${cat.id}" title="Click to toggle ${cat.label}">`;
+      const titleOpen  = isTotals ? `<div class="scard-title">` : `<button type="button" class="scard-title scard-title-btn" data-cat-id="${escapeHtml(cat.id)}" title="Click to toggle ${escapeHtml(cat.label)}">`;
       const titleClose = isTotals ? `</div>` : `</button>`;
 
       card.innerHTML = `
         ${titleOpen}
           ${toggleHtml}
-          <span class="scard-title-text" style="color:var(${cat.cssVar})">${cat.label || cat.id.toUpperCase()}</span>
+          <span class="scard-title-text" style="color:var(${escapeHtml(cat.cssVar)})">${escapeHtml(cat.label || cat.id.toUpperCase())}</span>
         ${titleClose}
         <div class="scard-body">
           <span class="sb-label">SENT</span><span class="sb-val" id="sc-${cat.id}-sent">0</span>
@@ -1451,15 +1562,15 @@
     const header = document.createElement('div');
     header.className = 'url-cat-header';
     header.innerHTML = `
-      <span class="url-cat-title" style="color:var(${cat.cssVar})">${cat.label}</span>
-      <span class="url-cat-count" id="url-count-${cat.id}">${cat.urls.length} urls</span>
+      <span class="url-cat-title" style="color:var(${escapeHtml(cat.cssVar)})">${escapeHtml(cat.label)}</span>
+      <span class="url-cat-count" id="url-count-${escapeHtml(cat.id)}">${cat.urls.length} urls</span>
     `;
     body.appendChild(header);
 
     if (isVideoCat) {
       const hint = document.createElement('div');
       hint.className = 'url-cat-hint';
-      hint.innerHTML = `Toggle <b>STREAM</b> on any URL to keep the hidden browser open for ${cat.streamDuration || 15}s so video actually auto-plays. Leave off for regular one-shot loads (landing pages, etc.).`;
+      hint.innerHTML = `Toggle <b>STREAM</b> on any URL to keep the hidden browser open for ${Number(cat.streamDuration) || 15}s so video actually auto-plays. Leave off for regular one-shot loads (landing pages, etc.).`;
       body.appendChild(hint);
     }
 
@@ -1592,7 +1703,7 @@
 
       const section = document.createElement('div');
       section.className = 'atk-url-section';
-      section.innerHTML = `<div class="atk-url-section-title">${v.label} — ${v.desc}</div>`;
+      section.innerHTML = `<div class="atk-url-section-title">${escapeHtml(v.label)} — ${escapeHtml(v.desc)}</div>`;
 
       const list = document.createElement('div');
       list.className = 'url-list';
@@ -1654,7 +1765,7 @@
       const s = state.stats[cat.id] || {};
       return `
         <div class="report-card">
-          <div class="report-card-title" style="color:${getComputedStyle(document.documentElement).getPropertyValue(cat.cssVar).trim()}">${cat.label}</div>
+          <div class="report-card-title" style="color:${escapeHtml(getComputedStyle(document.documentElement).getPropertyValue(cat.cssVar).trim())}">${escapeHtml(cat.label)}</div>
           <div class="report-stat-row"><span>Sent</span><span class="report-stat-val">${s.sent||0}</span></div>
           <div class="report-stat-row"><span>OK</span><span class="report-stat-val" style="color:var(--ok)">${s.ok||0}</span></div>
           <div class="report-stat-row"><span>Blocked</span><span class="report-stat-val" style="color:var(--blocked)">${s.blk||0}</span></div>
@@ -1673,8 +1784,8 @@
       <div class="report-content">
         <div class="report-section">
           <h3>SUMMARY</h3>
-          <div class="report-stat-row"><span>Generated</span><span class="report-stat-val">${date}</span></div>
-          <div class="report-stat-row"><span>Duration</span><span class="report-stat-val">${dur}</span></div>
+          <div class="report-stat-row"><span>Generated</span><span class="report-stat-val">${escapeHtml(date)}</span></div>
+          <div class="report-stat-row"><span>Duration</span><span class="report-stat-val">${escapeHtml(dur)}</span></div>
           <div class="report-stat-row"><span>Total Attempts</span><span class="report-stat-val">${tot.sent}</span></div>
           <div class="report-stat-row"><span>Passed</span><span class="report-stat-val" style="color:var(--ok)">${tot.ok} (${passRate}%)</span></div>
           <div class="report-stat-row"><span>Blocked</span><span class="report-stat-val" style="color:var(--blocked)">${tot.blk} (${blockRate}%)</span></div>
@@ -1693,7 +1804,7 @@
         <div class="report-section">
           <h3>MODE</h3>
           <div class="report-stat-row"><span>Running in</span><span class="report-stat-val">${IS_ELECTRON ? 'Electron (real traffic)' : 'Browser (mock mode)'}</span></div>
-          <div class="report-stat-row"><span>Build</span><span class="report-stat-val">v${BUILD_INFO.version} · ${BUILD_INFO.commit}</span></div>
+          <div class="report-stat-row"><span>Build</span><span class="report-stat-val">v${escapeHtml(BUILD_INFO.version)} · ${escapeHtml(BUILD_INFO.commit)}</span></div>
         </div>
       </div>
     `;
@@ -1714,13 +1825,13 @@
       });
       const rows = run.events.map(e => `
         <div class="report-stat-row" style="font-size:10px">
-          <span>${e.timeStr} · ${e.description || e.url}</span>
-          <span class="report-stat-val" style="color:var(--${outcomeClass(e.outcome)})">${statusLabel(e.outcome)}${e.response ? ' — ' + e.response : ''}</span>
+          <span>${escapeHtml(e.timeStr)} · ${escapeHtml(e.description || e.url)}</span>
+          <span class="report-stat-val" style="color:var(--${outcomeClass(e.outcome)})">${escapeHtml(statusLabel(e.outcome))}${e.response ? ' — ' + escapeHtml(e.response) : ''}</span>
         </div>`).join('');
       return `
         <div style="margin-bottom:14px; padding:10px; background:var(--bg-surface); border:1px solid var(--border-dim)">
           <div style="font-weight:700; font-size:10px; letter-spacing:0.08em; color:var(--cat-attack); margin-bottom:6px">
-            RUN ${idx + 1} — ${new Date(run.start).toLocaleTimeString()} · ${Math.round(run.duration / 1000)}s${run.aborted ? ' (ABORTED)' : ''}
+            RUN ${idx + 1} — ${escapeHtml(new Date(run.start).toLocaleTimeString())} · ${Math.round(run.duration / 1000)}s${run.aborted ? ' (ABORTED)' : ''}
           </div>
           <div class="report-stat-row"><span>Events</span><span class="report-stat-val">${run.events.length}</span></div>
           <div class="report-stat-row"><span>Passed</span><span class="report-stat-val" style="color:var(--ok)">${counts.ok}</span></div>
@@ -1748,13 +1859,13 @@
 
     const evtRows = state.events.slice(0, 1000).map(e => `
       <tr>
-        <td>${e.timeStr}</td>
-        <td>${state.config.categories[e.category]?.short || e.category.toUpperCase()}</td>
-        <td class="${outcomeClass(e.outcome)}">${statusLabel(e.outcome)}</td>
-        <td>${e.mode.toUpperCase()}</td>
-        <td>${e.code || '—'}</td>
-        <td>${e.url}</td>
-        <td>${e.response || ''}</td>
+        <td>${escapeHtml(e.timeStr)}</td>
+        <td>${escapeHtml(state.config.categories[e.category]?.short || e.category.toUpperCase())}</td>
+        <td class="${outcomeClass(e.outcome)}">${escapeHtml(statusLabel(e.outcome))}</td>
+        <td>${escapeHtml(e.mode.toUpperCase())}</td>
+        <td>${escapeHtml(String(e.code || '—'))}</td>
+        <td>${escapeHtml(e.url)}</td>
+        <td>${escapeHtml(e.response || '')}</td>
       </tr>`).join('');
 
     const attackRunsHtml = state.attackRuns.length ? `
@@ -1770,7 +1881,7 @@ ${state.attackRuns.map((run, idx) => {
   });
   return `
 <div class="atk-run">
-  <div class="atk-run-title">RUN ${idx + 1} — ${new Date(run.start).toLocaleString()} · ${Math.round(run.duration/1000)}s${run.aborted ? ' (ABORTED)' : ''}</div>
+  <div class="atk-run-title">RUN ${idx + 1} — ${escapeHtml(new Date(run.start).toLocaleString())} · ${Math.round(run.duration/1000)}s${run.aborted ? ' (ABORTED)' : ''}</div>
   <div class="atk-summary">
     <span>Events: <b>${run.events.length}</b></span>
     <span class="ok">Passed: <b>${counts.ok}</b></span>
@@ -1783,11 +1894,11 @@ ${state.attackRuns.map((run, idx) => {
     <thead><tr><th>TIME</th><th>VECTOR</th><th>TARGET</th><th>STATUS</th><th>DETAIL</th></tr></thead>
     <tbody>
       ${run.events.map(e => `<tr>
-        <td>${e.timeStr}</td>
-        <td>${(e.vectorType || '').toUpperCase()}</td>
-        <td>${e.description || e.url}</td>
-        <td class="${outcomeClass(e.outcome)}">${statusLabel(e.outcome)}</td>
-        <td>${e.response || ''}</td>
+        <td>${escapeHtml(e.timeStr)}</td>
+        <td>${escapeHtml((e.vectorType || '').toUpperCase())}</td>
+        <td>${escapeHtml(e.description || e.url)}</td>
+        <td class="${outcomeClass(e.outcome)}">${escapeHtml(statusLabel(e.outcome))}</td>
+        <td>${escapeHtml(e.response || '')}</td>
       </tr>`).join('')}
     </tbody>
   </table>
@@ -1799,7 +1910,7 @@ ${state.attackRuns.map((run, idx) => {
 <html>
 <head>
 <meta charset="UTF-8">
-<title>STG Report — ${date}</title>
+<title>STG Report — ${escapeHtml(date)}</title>
 <style>
   body { font-family: 'Courier New', monospace; background: #0c0e12; color: #c8d0e0; padding: 24px; }
   h1 { font-size: 16px; letter-spacing: .15em; margin-bottom: 4px; color: #e8edf8; }
@@ -1823,7 +1934,7 @@ ${state.attackRuns.map((run, idx) => {
 </head>
 <body>
 <h1>STG — SASE TRAFFIC GENERATOR REPORT</h1>
-<div class="meta">Generated: ${date} &nbsp;|&nbsp; Duration: ${dur} &nbsp;|&nbsp; Mode: ${IS_ELECTRON ? 'Real Traffic (Electron)' : 'Mock (Browser)'} &nbsp;|&nbsp; Build: v${BUILD_INFO.version} · ${BUILD_INFO.commit}</div>
+<div class="meta">Generated: ${escapeHtml(date)} &nbsp;|&nbsp; Duration: ${escapeHtml(dur)} &nbsp;|&nbsp; Mode: ${IS_ELECTRON ? 'Real Traffic (Electron)' : 'Mock (Browser)'} &nbsp;|&nbsp; Build: v${escapeHtml(BUILD_INFO.version)} · ${escapeHtml(BUILD_INFO.commit)}</div>
 <h2>SUMMARY</h2>
 <div class="grid">
   <div class="card"><div class="card-title">TOTAL</div>
@@ -1837,7 +1948,7 @@ ${state.attackRuns.map((run, idx) => {
   </div>
   ${Object.values(state.config.categories).map(cat => {
     const s = state.stats[cat.id] || {};
-    return `<div class="card"><div class="card-title">${cat.label}</div>
+    return `<div class="card"><div class="card-title">${escapeHtml(cat.label)}</div>
       <div class="row"><span>Sent</span><span class="val">${s.sent||0}</span></div>
       <div class="row"><span>OK</span><span class="val ok">${s.ok||0}</span></div>
       <div class="row"><span>Blocked</span><span class="val blk">${s.blk||0}</span></div>
@@ -1949,8 +2060,11 @@ ${attackRunsHtml}
         const text = await inp.files[0].text();
         try {
           const parsed = JSON.parse(text);
-          if (parsed.categories) Object.assign(state.config.categories, parsed.categories);
-          if (parsed.settings)   Object.assign(state.config.settings, parsed.settings);
+          // Reset to defaults then run the same sanitising merge loadConfig()
+          // uses, so imported JSON can't smuggle __proto__, non-http URLs,
+          // or wrong-typed values into state.
+          state.config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+          mergeSavedConfig(parsed);
           renderConfigCategories();
           renderStatsCards();
           updateStatsCards();

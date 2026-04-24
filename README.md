@@ -1,189 +1,211 @@
 # STG — SASE Traffic Generator
 
-**Current version: 1.2.7**
+**Current version: 1.3.0**
 
-A traffic simulation tool for FortiSASE (and other SASE vendor) demo environments. Generates realistic categorised web traffic through a running SASE agent to demonstrate URL filtering, threat detection, and reporting.
+A desktop traffic-simulation tool for FortiSASE (and other SASE-vendor) demo environments. STG generates realistic categorised web traffic through a running SASE agent so you can demonstrate URL filtering, threat detection, and reporting in a predictable, repeatable way.
 
-The build fingerprint (`v1.2.7 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
-
-## Installing on a Debian/Ubuntu VM (preferred)
-
-Download the `.deb` for your architecture from the [latest release](https://github.com/cstrat/STG/releases/latest) and install with apt — this handles all dependencies, puts STG in your app menu, and requires no launcher script:
-
-```bash
-sudo apt install ./STG_1.2.3_arm64.deb     # or _amd64.deb on x86-64 VMs
-```
-
-Launch it from the app menu, or `stg-sase-traffic-generator` from a terminal.
-
-## Installing on other Linux distros
-
-Fall back to the `.AppImage`:
-
-```bash
-chmod +x STG-1.2.3-arm64.AppImage
-./STG-1.2.3-arm64.AppImage
-```
+The build fingerprint (`v1.3.0 · <git-hash>`) is shown in the top bar of the app, so exported reports and bug reports can be tied back to a specific build.
 
 ---
 
-## Features
+## Install
+
+### Debian / Ubuntu (preferred)
+
+Grab the `.deb` for your architecture from the [latest release](https://github.com/cstrat/STG/releases/latest):
+
+```bash
+sudo apt install ./STG-1.3.0-arm64.deb     # or STG-1.3.0-amd64.deb on x86-64
+```
+
+This handles dependencies, registers STG in your app menu, and gives you a `stg-sase-traffic-generator` terminal command. No launcher script required.
+
+### Other Linux distros (AppImage)
+
+```bash
+chmod +x STG-1.3.0-arm64.AppImage
+./STG-1.3.0-arm64.AppImage
+```
+
+On Ubuntu 24+ the Chromium setuid sandbox can't initialise under AppImage's extract-and-run, so the app starts with `--no-sandbox`. This is deliberate and expected — the trade-off is documented in the security review below.
+
+### Windows
+
+Portable `.exe` from the release page — no install, double-click to run.
+
+### macOS
+
+Unsigned `.dmg` / `.zip` from the release page. First launch needs a right-click → Open to bypass Gatekeeper.
+
+---
+
+## What it does
 
 | Feature | Detail |
 |---|---|
-| **Traffic Categories** | Artificial Intelligence, Social Media, Instant Messaging, Video Streaming, News, Malicious |
-| **Configurable URLs** | Every URL in every category is editable via the ⚙ URL SETTINGS editor (separate tab for attack vectors). **RESTORE DEFAULTS** button resets any tab to the shipped list. |
-| **Speed Control** | Per-category: Slow (15s), Medium (6s), Fast (2s) — only applies to HTTP mode, since BROWSER/STREAM are naturally paced by their own work. |
-| **Request Modes** | Per-category: **HTTP** (Node `electron.net`), **BROWSER** (Chromium webview with crawl), **MIX** (alternates per request). |
-| **Stream Flag (video)** | Per-URL toggle on the Video tab marks a URL as streaming — the webview holds for 15 s so autoplaying video actually plays through (YouTube, Vimeo, Twitch, Kick, etc.). |
-| **Crawl Depth** | BROWSER mode clicks through `crawlDepth − 1` random on-page links after the initial load. Each hop is logged as its own event with its own byte delta. |
-| **Live Preview Tiles** | **👁 LIVE PREVIEW** toggle replaces the log with a 3 × 2 grid of live `<webview>` tiles — see (and hear) what each category is loading in real time. Same webview is the measurement source so there are no duplicate loads. |
-| **Cyber Attack Simulation** | Pre-launch overlay with toggles: port scans, EICAR downloads, C2 beacons, phishing, exfiltration. Full per-run history in the report. |
-| **Cloudflare Challenge Detection** | Separate CHALLENGE status distinguishes CF/CAPTCHA pages from real SASE blocks. |
-| **Safety** | Downloads are cancelled before any save-dialog appears. Permission prompts (notifications, mic, camera, geolocation) are silently denied. `window.open` popups are blocked. |
-| **Parallel Execution** | All enabled categories fire their first request immediately on START — no waiting for the speed interval before anything moves. |
-| **Live Log** | Colour-coded by category and outcome, filterable, newest-first. Crawl hops marked with ↪. |
-| **Per-Category Stats** | Running counters for SENT / OK / BLK / CHA / WRN / ERR + TX / RX bytes. Toggle per-category on/off by clicking the category name in the stats bar. |
-| **Reports** | Export a self-contained HTML report: summary, per-category breakdown, attack simulation history, and full event log. |
-| **Persistent Config** | URL lists and settings survive app restarts. |
-| **Splash/About** | First-launch tour with status guide + GitHub link, shown every launch (dismissable with GET STARTED or Escape) and re-openable via the **?** button. |
+| **Six traffic categories** | Artificial Intelligence, Social Media, Instant Messaging, Video Streaming, News, Malicious |
+| **Fully editable URL lists** | Every URL in every category is editable via the ⚙ URL SETTINGS editor (separate tab for attack vectors). **RESTORE DEFAULTS** on any tab re-seeds the shipped list. |
+| **Per-category speed** | SLOW (15 s) / MED (6 s) / FAST (2 s). Speed applies to HTTP mode only — BROWSER / STREAM pace themselves on real page-load time. |
+| **Per-category mode** | **HTTP** (Node `electron.net`), **BROWSER** (Chromium `<webview>` with crawl), **MIX** (alternates per request). |
+| **Per-URL stream flag (video)** | Video-tab entries can be marked as streaming — the tile holds for 15 s so YouTube / Vimeo / Twitch / Kick autoplay actually plays through. |
+| **Crawl depth (BROWSER)** | After the initial load, BROWSER mode clicks through `crawlDepth − 1` random on-page links. Each hop logs as its own event with its own byte delta. |
+| **Live Preview tiles** | **👁 LIVE PREVIEW** swaps the log for a 3 × 2 grid of live `<webview>` tiles — see and hear what each category is loading. Same webview is the measurement source; no duplicate loads. |
+| **⚡ Cyber Attack simulation** | Pre-launch overlay selects vectors — port scans, EICAR downloads, C2 beacons, phishing, exfiltration — then runs ~30–60 s. Per-run history is kept for the report. |
+| **Cloudflare challenge detection** | Separate CHALLENGE status distinguishes CF / CAPTCHA pages from real SASE blocks. |
+| **Parallel start** | All enabled categories fire their first request immediately on START — no speed-interval wait before traffic begins. |
+| **Live log** | Colour-coded by category and outcome, filterable by category, newest-first. Crawl hops marked with ↪. |
+| **Per-category stats** | Running SENT / OK / BLK / CHA / WRN / ERR + TX / RX bytes. Click a stats card to toggle that category on or off. |
+| **HTML report** | Export a self-contained HTML report with summary, per-category breakdown, attack simulation history, and the full event log. |
+| **Safety defaults** | File downloads are silently cancelled before any save dialog appears. Permission prompts (geolocation, notifications, mic, camera, clipboard) are denied. `window.open` / `target="_blank"` popups are suppressed. |
+| **Persistent config** | URL lists and settings survive app restarts. JSON import / export from the URL editor. |
 
 ---
 
-## Development — run in browser first
+## Running from source
 
-The entire UI works as a static HTML page in Chrome/Firefox using **mock data**. No Node.js needed for UI work.
+STG works in two modes:
+
+**Browser mock mode** — open `renderer/index.html` directly in Chrome or Firefox. No Node.js required. Outcomes are weighted-random per category (social / video tend to block, AI tends to pass) so the UI can be developed without a SASE client running.
 
 ```bash
-# Just open the file in Chrome:
-google-chrome "renderer/index.html"
+google-chrome renderer/index.html
 # or
-firefox "renderer/index.html"
+firefox renderer/index.html
 ```
 
-Mock mode generates weighted-random outcomes per category (social/video tend to be blocked, AI tends to pass) to simulate a realistic FortiSASE environment.
-
----
-
-## Development — run as Electron app
-
-To test real HTTP traffic (SASE client must be running on the machine):
+**Electron real-traffic mode** — needs a SASE agent running on the machine:
 
 ```bash
-# Install dependencies (one-time)
-npm install
-
-# Launch
+npm install   # one-time
 npm start
 ```
 
-Electron mode uses actual HTTP requests from the Node.js main process — the FortiSASE agent intercepts these exactly as it would any other traffic.
+In Electron mode, HTTP requests go through Node's `electron.net` stack, BROWSER / STREAM requests go through live `<webview>` tiles, and everything is intercepted by your installed SASE client exactly as any other traffic would be.
 
 ---
 
-## Building — single distributable file
+## Building distributables
 
 ```bash
-# Linux AppImage (single portable file)
-npm run build:linux
-
-# Windows portable EXE
-npm run build:win
-
-# Both
-npm run build
+npm run build:linux      # .deb + .AppImage, both arm64 and x86-64
+npm run build:linux-x64
+npm run build:linux-arm64
+npm run build:win        # portable .exe
+npm run build:mac        # .dmg + .zip, both arm64 and x86-64
+npm run build            # all Linux + Windows in one shot
 ```
 
-Output goes to `dist/`. Copy the `.AppImage` or `.exe` to any VM — no installation required.
-
-```bash
-# Linux: make executable and run
-chmod +x "dist/STG - SASE Traffic Generator-1.0.0.AppImage"
-./"dist/STG - SASE Traffic Generator-1.0.0.AppImage"
-```
+Output lands in `dist/`. Copy to any VM — no installation required for AppImage / portable EXE.
 
 ---
 
-## UI Guide
+## UI guide
 
 ### Top bar
-- **Status dot** — grey = idle, green = running, red pulsing = attack mode
-- **Rate** — requests per minute (rolling 60s window)
-- **↑/↓** — current TX/RX bandwidth in bytes/sec
-- **Total** — cumulative counts and bytes since START
+- **Status dot** — grey = idle, green = running, red pulsing = attack mode.
+- **Uptime** — wall-clock since the app started.
+- **Rate** — requests per minute, rolling 60 s window.
+- **↑ / ↓** — current TX / RX bandwidth, rolling 5 s window.
+- **Total** — cumulative count and bytes.
+- **▶ START** / **■ STOP** — also bound to Space from anywhere in the app.
+- **⚡ ATTACK** — opens the attack pre-launch overlay.
+- **↻ RESET** / **📋 REPORT** — visible after a run; reset clears everything, report opens the summary modal.
 
-### Config bar
-- **▶ CONFIGURATION** — expands the settings panel
-- **Category pills** — coloured per category, shows speed. Click to enable/disable that category
-- **⚙** — opens the URL editor modal
+### Stats bar (bottom)
+Per-category card with enable toggle, SENT / OK / BLK / CHA / WRN / ERR counters, and TX / RX bytes. Click the title to toggle that category on or off. **CONFIGURATION** expands the settings panel upward; **URL SETTINGS** opens the URL editor modal.
 
 ### Configuration panel
-- Per-category enable toggle, speed selection (SLOW/MED/FAST), and URL count shortcut
-- Request mode (HTTP vs Browser), timeout, crawl depth
-- Block detection signatures (strings searched in response body)
-- Bulk speed controls, log/stats reset, report export
+Per-category speed, mode, and URL count shortcut. Global timeout, crawl depth, and block-detection signatures. Bulk SLOW/MED/FAST and HTTP/BROWSER/MIX buttons apply across all categories.
 
-### ⚙ URL Editor
-Add, remove, or edit URLs for any category. Changes take effect immediately on the next request cycle. Use this to match your specific SASE vendor's URL classification — e.g. LinkedIn may need to be in a different category depending on how your vendor categorises it.
+### ⚙ URL editor
+Edit, add, remove URLs per category. Separate **⚡ ATTACK** tab edits the port list and the URL lists for EICAR / C2 / phishing / exfiltration vectors. **RESTORE DEFAULTS** re-seeds the current tab; **IMPORT / EXPORT JSON** round-trips the full config.
 
-### ⚡ ATTACK button
-Triggers a ~30–60 second simulated cyber attack that pauses normal traffic and runs:
-1. Port scans (22, 23, 445, 3389, 4444, 1337, etc.)
-2. EICAR test file download attempts (multiple variants)
+### ⚡ Attack overlay
+Pick the vectors you want to run, then **LAUNCH ATTACK**:
+1. Port scans (22, 23, 445, 3389, 4444, 1337, …)
+2. EICAR test-file download attempts (multiple variants)
 3. C2 beacon attempts to known-malicious domains
-4. Malware dropper/payload download simulation
-5. Data exfiltration beacon simulation
+4. Malware-dropper / payload download simulation
+5. Data-exfiltration beacon simulation
 
-Normal traffic resumes automatically when the attack completes.
+Normal traffic pauses for the duration; progress, counts, and a mini-log stream during the run. **■ ABORT** at any time. Per-run history is kept for the report.
 
-### Space bar
-Press **Space** to Start/Stop traffic generation from anywhere in the app.
-
----
-
-## Block Detection
-
-In Electron (real traffic) mode, a request is classified as **BLOCKED** when:
-1. HTTP response status is `403`
-2. Response body contains any configured signature string (default: `FortiGuard`, `Web Page Blocked`, `Access Denied`, `fortinet`, `URL blocked`)
-3. Browser mode receives a navigation failure matching block patterns
-
-You can add/remove signatures in the Configuration panel to match your specific SASE vendor's block page content.
+### ? button (splash / about)
+First-launch tour with the status-guide legend. Re-openable from the **?** button in the top bar.
 
 ---
 
-## Configuration Persistence
+## Block detection
 
-- **Browser mode**: settings saved to `localStorage`
-- **Electron mode**: settings saved to a JSON file in the OS user data directory (`~/.config/STG - SASE Traffic Generator/stg-config.json` on Linux)
+A request is classified **BLOCKED** when:
+1. The final URL matches SASE block pages (`fortiguard`, `fortigate`, `fortiproxy`, `block.fortinet`), **or**
+2. HTTP status is `403`, **or**
+3. The response body contains any configured signature string (default: `FortiGuard`, `Web Page Blocked`, `Access Denied`, `fortinet`, `URL blocked`).
 
-You can also export/import the full config as JSON via the ⚙ URL Editor modal.
+A request is classified **CHALLENGE** when the body matches Cloudflare / bot-check signatures (`cf-ray`, `just a moment`, `checking your browser`, `attention required! | cloudflare`, …). Challenges are *not* SASE blocks — they're the origin protecting itself from a scripted client. SASE-specific signals win over CF detection; CF detection wins over generic 403.
+
+Add or remove signatures in the Configuration panel to match your specific SASE vendor's block-page content.
 
 ---
 
-## Project Structure
+## Configuration storage
+
+| Mode | Location |
+|---|---|
+| Electron | `~/.config/STG - SASE Traffic Generator/stg-config.json` (Linux), equivalent per OS |
+| Browser mock | `localStorage` key `stg-config` |
+
+Use the URL editor's **IMPORT / EXPORT JSON** buttons to move a full config between machines. Imported JSON is sanitised before it's applied: unknown keys are dropped, `__proto__` / `constructor` are rejected, URL entries must parse as http or https, and numeric ranges are clamped.
+
+---
+
+## Security posture
+
+STG handles hostile-by-design content (malicious URLs, attack vectors, third-party response bodies), so it's built to keep that containment tight. A full security review was completed at v1.3.0 and drove the hardening in that release. The key properties:
+
+- **`contextIsolation: true`, `nodeIntegration: false`, `webviewTag: true`**. The renderer has no direct Node access; all privileged operations go through a narrow `electronAPI` IPC surface exposed by `preload.js` (make-http-request, classify-response, port-scan, load/save config, save-report, webview-bytes-get/reset).
+- **Preview session is locked down**. The shared `persist:stg-preview` session cancels every download before any save dialog can appear, denies all permission requests (geolocation, notifications, mic, camera, clipboard), and suppresses `window.open` / `target="_blank"` popups.
+- **Content Security Policy** on the renderer restricts `script-src` to `'self'`, forbids plugins (`object-src 'none'`), and prevents `<base>` tampering (`base-uri 'none'`).
+- **Every dynamic `innerHTML` sink HTML-escapes** user-configurable URLs, HTTP status text from origins, imported-config values, and block-signature strings. Log rows, the in-app report modal, and the exported HTML report all render untrusted text as text.
+- **Imported config is sanitised**, never `Object.assign`ed. Only whitelisted keys with expected types are copied; `__proto__` / `constructor` / `prototype` are stripped; URL entries that don't parse as http(s) are dropped; counts and timeouts are clamped.
+- **Chromium sandbox caveat**. AppImage on Ubuntu 24+ can't set the setuid sandbox and AppArmor blocks the user-namespace fallback, so the app starts with `--no-sandbox`. The CSP + escaping + narrow IPC surface are the defences in depth against that trade-off. If you are packaging STG for a hardened environment, consider building the `.deb` (which installs the setuid helper correctly) and re-enabling the sandbox.
+
+`npm audit` is clean. Electron is pinned at 41.x.
+
+---
+
+## Project structure
 
 ```
 STG - SASE Traffic Generator/
-├── main.js              Electron main process — HTTP via electron.net, port scan, file I/O
-├── preload.js           IPC bridge (contextBridge) between main and renderer
+├── main.js              Electron main process — HTTP via electron.net, session hardening,
+│                        port scan, config load/save, report save, byte tracking
+├── preload.js           contextBridge IPC surface exposed to the renderer
 ├── package.json         Dependencies + electron-builder config
-├── generate-version.js  Writes renderer/version.json before each build (version + git hash)
+├── generate-version.js  Writes renderer/version.json (version + git hash + branch) before builds
 ├── build-icon.js        Rasterises the STG logo SVG to PNG icons at 9 sizes
-├── launch.sh            Self-healing launcher (handles libz, FUSE, dock integration)
+├── launch.sh            Self-healing AppImage launcher (libz shim, FUSE workaround,
+│                        user-level desktop-file + icon install)
 ├── build/
-│   ├── icon.png         Master icon for the Electron BrowserWindow
+│   ├── icon.png         Master BrowserWindow icon
 │   └── icons/           Per-size PNGs used by electron-builder
 ├── renderer/
-│   ├── index.html       UI structure
+│   ├── index.html       UI structure + CSP
 │   ├── style.css        All styles (dark terminal aesthetic)
 │   ├── app.js           All frontend logic — works in browser (mock) and Electron (real)
-│   └── version.json     Generated at build time (version, commit, branch, built)
-└── dist/                Build output (AppImage, portable EXE)
+│   └── version.json     Generated at build time
+├── dist/                Build output (.deb / .AppImage / .exe / .dmg / .zip)
+└── RELEASE_NOTES.md     Latest-release changelog
 ```
+
+---
+
+## AI-generated code notice
+
+STG was largely written with **Claude Opus** (Anthropic), working in pair with the maintainer. Architecture, feature scoping, testing, and security review were collaborative — human-reviewed before each release. Users integrating STG into their own workflows should review the source themselves: it's a small codebase by design (one main process file, one preload, one renderer script) so that's tractable.
 
 ---
 
 ## Support
 
-For questions or issues, contact **chris.stratford@vocus.com.au** and include the build fingerprint shown in the top bar of the app (e.g. `v1.1.0 · d45386c1+dirty`).
+For questions or issues, file a ticket at <https://github.com/cstrat/STG/issues> and include the build fingerprint shown in the top bar of the app (e.g. `v1.3.0 · d45386c1+dirty`).

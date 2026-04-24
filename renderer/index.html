@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    CSP: restrict script loading to local files (defangs HTML injection),
+    allow inline styles (the renderer sets style="..." on some elements),
+    allow Google Fonts CSS + font files, allow any http(s) frame src so the
+    preview <webview> tiles can load user-configured pages.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-src https: http:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>STG — SASE Traffic Generator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
