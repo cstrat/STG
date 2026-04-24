@@ -288,6 +288,7 @@
     if (mode === 'browser' && opts.crawlDepth > 1) {
       const visited = new Set([fullUrl]);
       for (let i = 1; i < opts.crawlDepth; i++) {
+        if (!state.running) break;
         let links = [];
         try {
           links = await wv.executeJavaScript(`
@@ -297,6 +298,7 @@
               .filter(h => !h.includes('#'))
           `);
         } catch (_) { break; }
+        if (!state.running) break;
         const available = (links || []).filter(l => !visited.has(l));
         if (available.length === 0) break;
         const next = available[Math.floor(Math.random() * available.length)];
@@ -307,11 +309,17 @@
       }
     }
 
-    // STREAM mode: hold the tile on the current page so video plays/buffers
+    // STREAM mode: hold the tile on the current page so video plays/buffers.
+    // Poll state.running so STOP can break out instantly instead of waiting
+    // up to streamDuration seconds for the timer to fire.
     if (mode === 'stream') {
       const loadTime = Date.now() - startTime;
       const hold = Math.max(1000, (opts.streamDuration || 15) * 1000 - loadTime);
-      await new Promise(r => setTimeout(r, hold));
+      const holdEnd = Date.now() + hold;
+      while (Date.now() < holdEnd) {
+        if (!state.running) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
     }
 
     // Classify the final landed page
@@ -325,7 +333,11 @@
     const bytes = wcId != null ? await window.electronAPI.webviewBytesGet(wcId) : { tx: 0, rx: 0 };
 
     let outcome, response;
-    if (cls.challenge) {
+    if (!state.running) {
+      // User hit STOP while this request was in flight — surface that in the log
+      outcome = 'err';
+      response = 'Stopped';
+    } else if (cls.challenge) {
       outcome = 'challenge';
       response = 'CF Challenge';
     } else if (cls.blocked) {
@@ -339,7 +351,7 @@
     releaseLock && releaseLock();
     delete webviewLocks[catId];
 
-    return { url, mode, outcome, code: 200, response, txBytes: bytes.tx, rxBytes: bytes.rx };
+    return { url, mode, outcome, code: outcome === 'err' ? 0 : 200, response, txBytes: bytes.tx, rxBytes: bytes.rx };
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -770,6 +782,18 @@
     state.running = false;
     Object.values(state.timers).forEach(t => clearTimeout(t));
     state.timers = {};
+
+    // Kill every tile webview: blank the src to stop audio + cancel any
+    // in-flight load, clear the URL label. Any in-flight navigateWebview
+    // promises will fire did-fail-load (code -3 ERR_ABORTED) and resolve
+    // cleanly; stream holds + crawl loops poll state.running so they exit.
+    document.querySelectorAll('.preview-webview').forEach(wv => {
+      try {
+        if (typeof wv.stop === 'function') wv.stop();
+        wv.src = 'about:blank';
+      } catch (_) {}
+    });
+    document.querySelectorAll('.preview-url').forEach(u => { u.textContent = '—'; });
   }
 
   // ─────────────────────────────────────────────────────────────────
