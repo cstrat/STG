@@ -56,18 +56,19 @@
       video: {
         id: 'video', label: 'VIDEO STREAMING', short: 'VIDEO',
         color: 'var(--cat-video)', cssVar: '--cat-video',
-        enabled: true, speed: 'slow', mode: 'stream', streamDuration: 15,
+        enabled: true, speed: 'slow', mode: 'browser', streamDuration: 15,
+        // URLs marked `stream: true` force the hidden BrowserWindow to stay
+        // open for streamDuration seconds so video actually plays. Plain URLs
+        // use the category's normal mode (HTTP/BROWSER/MIX).
         urls: [
           // YouTube — autoplay embed URLs, muted so autoplay isn't blocked.
-          // youtube-nocookie.com lets the embed load without a consent wall.
-          'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1',  // Rickroll
-          'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1&mute=1',  // Gangnam Style
-          'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1&mute=1',  // Despacito
-          'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&mute=1',  // First ever YouTube video
-          // Vimeo — autoplay embed
-          'player.vimeo.com/video/76979871?autoplay=1&muted=1',
-          'player.vimeo.com/video/347119375?autoplay=1&muted=1',
-          // Streaming service landing pages (still classified as Video Streaming by SASE)
+          { url: 'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1', stream: true },  // Rickroll
+          { url: 'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1&mute=1', stream: true },  // Gangnam Style
+          { url: 'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1&mute=1', stream: true },  // Despacito
+          { url: 'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&mute=1', stream: true },  // First-ever YouTube video
+          { url: 'player.vimeo.com/video/76979871?autoplay=1&muted=1',            stream: true },
+          { url: 'player.vimeo.com/video/347119375?autoplay=1&muted=1',           stream: true },
+          // Landing pages — still classified by SASE, regular (non-stream) hits
           'www.youtube.com/', 'www.twitch.tv/', 'www.netflix.com/',
           '9now.nine.com.au/', '7plus.com.au/', 'www.binge.com.au/',
           'www.disneyplus.com/', 'www.primevideo.com/', 'www.stan.com.au/',
@@ -197,6 +198,10 @@
     state.mixedState[catId] = next;
     return next;
   }
+
+  // URLs are either plain strings or { url, stream } objects — unify access:
+  function urlOf(entry)    { return typeof entry === 'string' ? entry : (entry && entry.url) || ''; }
+  function isStream(entry) { return typeof entry === 'object' && entry !== null && entry.stream === true; }
 
   // ─────────────────────────────────────────────────────────────────
   // UTILITIES
@@ -464,9 +469,7 @@
   // MOCK TRAFFIC GENERATION (browser dev mode)
   // ─────────────────────────────────────────────────────────────────
 
-  function mockRequest(catId, mode) {
-    const cat = state.config.categories[catId];
-    const url = randomItem(cat.urls);
+  function mockRequest(catId, url, mode) {
 
     // Weighted outcome — [ok, blocked, wrn, err, challenge]
     // AI / news lean into CF challenges since many of those sites use Cloudflare
@@ -514,9 +517,8 @@
   // REAL TRAFFIC (Electron mode)
   // ─────────────────────────────────────────────────────────────────
 
-  async function realRequest(catId, mode) {
+  async function realRequest(catId, url, mode) {
     const cat = state.config.categories[catId];
-    const url = randomItem(cat.urls);
     const { timeout, blockSignatures } = state.config.settings;
 
     let result;
@@ -570,14 +572,19 @@
     state.timers[catId] = setTimeout(async () => {
       if (!state.running || !cat.enabled) return;
 
-      const mode = resolveMode(catId);
+      // Pick the URL first — a URL flagged stream:true overrides the category
+      // mode (MIXED alternation isn't advanced in that case either).
+      const entry = randomItem(cat.urls) || '';
+      const url   = urlOf(entry);
+      const mode  = isStream(entry) ? 'stream' : resolveMode(catId);
+
       let result;
       if (IS_ELECTRON) {
-        try { result = await realRequest(catId, mode); } catch (e) {
-          result = { url: randomItem(cat.urls), mode, outcome: 'err', code: 0, response: String(e.message).slice(0, 60), txBytes: 0, rxBytes: 0 };
+        try { result = await realRequest(catId, url, mode); } catch (e) {
+          result = { url, mode, outcome: 'err', code: 0, response: String(e.message).slice(0, 60), txBytes: 0, rxBytes: 0 };
         }
       } else {
-        result = mockRequest(catId, mode);
+        result = mockRequest(catId, url, mode);
         await new Promise(r => setTimeout(r, Math.random() * 400 + 100));
       }
 
@@ -924,7 +931,7 @@
       const modeGroup = document.createElement('div');
       modeGroup.className = 'cfg-speed-group';
       modeGroup.style.marginLeft = '8px';
-      [['http','HTTP'], ['browser','BROWSER'], ['mixed','MIX'], ['stream','STRM']].forEach(([val, label]) => {
+      [['http','HTTP'], ['browser','BROWSER'], ['mixed','MIX']].forEach(([val, label]) => {
         const btn = document.createElement('button');
         btn.className = 'cfg-mode-btn';
         btn.textContent = label;
@@ -1199,6 +1206,7 @@
 
   function renderCategoryUrlTab(body, cat) {
     if (!cat) return;
+    const isVideoCat = cat.id === 'video';
 
     const header = document.createElement('div');
     header.className = 'url-cat-header';
@@ -1208,17 +1216,54 @@
     `;
     body.appendChild(header);
 
+    if (isVideoCat) {
+      const hint = document.createElement('div');
+      hint.className = 'url-cat-hint';
+      hint.innerHTML = `Toggle <b>STREAM</b> on any URL to keep the hidden browser open for ${cat.streamDuration || 15}s so video actually auto-plays. Leave off for regular one-shot loads (landing pages, etc.).`;
+      body.appendChild(hint);
+    }
+
     const list = document.createElement('div');
     list.className = 'url-list';
 
     const renderUrls = () => {
       list.innerHTML = '';
-      cat.urls.forEach((url, idx) => {
+      cat.urls.forEach((entry, idx) => {
+        const url    = urlOf(entry);
+        const streamOn = isStream(entry);
+
         const row = document.createElement('div');
         row.className = 'url-row';
+
         const inp = document.createElement('input');
         inp.type = 'text'; inp.className = 'url-input'; inp.value = url; inp.placeholder = 'example.com/path';
-        inp.addEventListener('change', () => { cat.urls[idx] = inp.value.trim(); });
+        inp.addEventListener('change', () => {
+          const val = inp.value.trim();
+          if (typeof cat.urls[idx] === 'object' && cat.urls[idx] !== null) cat.urls[idx].url = val;
+          else cat.urls[idx] = val;
+        });
+        row.appendChild(inp);
+
+        if (isVideoCat) {
+          const tog = document.createElement('button');
+          tog.type = 'button';
+          tog.className = `url-stream-toggle ${streamOn ? 'on' : ''}`;
+          tog.innerHTML = `<span class="uss-dot"></span>STREAM`;
+          tog.title = streamOn
+            ? 'Streaming URL — browser stays open so video plays'
+            : 'Regular URL — uses the category mode (HTTP/BROWSER/MIX)';
+          tog.addEventListener('click', () => {
+            // Promote string → object form on first stream toggle
+            if (typeof cat.urls[idx] === 'string') cat.urls[idx] = { url: cat.urls[idx], stream: false };
+            cat.urls[idx].stream = !cat.urls[idx].stream;
+            tog.classList.toggle('on', cat.urls[idx].stream);
+            tog.title = cat.urls[idx].stream
+              ? 'Streaming URL — browser stays open so video plays'
+              : 'Regular URL — uses the category mode (HTTP/BROWSER/MIX)';
+          });
+          row.appendChild(tog);
+        }
+
         const del = document.createElement('button');
         del.className = 'url-del-btn'; del.textContent = '×';
         del.addEventListener('click', () => {
@@ -1227,7 +1272,8 @@
           const countEl = document.getElementById(`url-count-${cat.id}`);
           if (countEl) countEl.textContent = `${cat.urls.length} urls`;
         });
-        row.appendChild(inp); row.appendChild(del); list.appendChild(row);
+        row.appendChild(del);
+        list.appendChild(row);
       });
     };
     renderUrls();
@@ -1236,7 +1282,7 @@
     const addBtn = document.createElement('button');
     addBtn.className = 'url-add-btn'; addBtn.textContent = '+ ADD URL';
     addBtn.addEventListener('click', () => {
-      cat.urls.push('');
+      cat.urls.push(isVideoCat ? { url: '', stream: false } : '');
       renderUrls();
       const countEl = document.getElementById(`url-count-${cat.id}`);
       if (countEl) countEl.textContent = `${cat.urls.length} urls`;
@@ -1342,7 +1388,7 @@
 
   function closeUrlEditor() {
     Object.values(state.config.categories).forEach(cat => {
-      cat.urls = cat.urls.filter(u => u.trim().length > 0);
+      cat.urls = cat.urls.filter(u => urlOf(u).trim().length > 0);
     });
     Object.keys(state.config.settings.attack).forEach(k => {
       const v = state.config.settings.attack[k];

@@ -1109,6 +1109,53 @@ html, body {
 }
 .url-del-btn:hover { color: var(--blocked); }
 
+/* Per-URL STREAM toggle (video category only) */
+.url-cat-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(251, 191, 36, 0.06);
+  border-left: 2px solid var(--cat-video);
+}
+.url-cat-hint b { color: var(--cat-video); font-weight: 700; letter-spacing: 0.06em; }
+
+.url-stream-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 3px 7px;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.url-stream-toggle .uss-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.url-stream-toggle:hover { border-color: var(--cat-video); color: var(--cat-video); }
+.url-stream-toggle.on {
+  color: var(--cat-video);
+  border-color: var(--cat-video);
+  background: rgba(251, 191, 36, 0.1);
+}
+.url-stream-toggle.on .uss-dot {
+  background: var(--cat-video);
+  box-shadow: 0 0 5px var(--cat-video);
+}
+
 .url-add-btn {
   background: none;
   border: 1px dashed var(--border);
