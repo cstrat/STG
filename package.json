@@ -22,6 +22,7 @@
     "directories": {
       "output": "dist"
     },
+    "artifactName": "STG-${version}-${arch}.${ext}",
     "files": [
       "main.js",
       "preload.js",
