@@ -291,11 +291,28 @@
         if (!state.running) break;
         let links = [];
         try {
+          // Collect only http(s) links; skip fragments, mailto/tel/javascript,
+          // and anything that looks like a file download (PDF, archive,
+          // installer, video, office doc, etc.) — the session's will-download
+          // blocker catches the rest, but avoiding them in the first place
+          // keeps the crawl on real HTML pages.
           links = await wv.executeJavaScript(`
-            Array.from(document.querySelectorAll('a[href]'))
-              .map(a => a.href)
-              .filter(h => /^https?:/.test(h))
-              .filter(h => !h.includes('#'))
+            (function(){
+              const DL = /\\.(pdf|zip|tar|gz|tgz|bz2|7z|rar|dmg|iso|exe|msi|pkg|apk|deb|rpm|jar|bin|bat|cmd|sh|ps1|doc|docx|xls|xlsx|ppt|pptx|rtf|odt|ods|odp|csv|tsv|epub|mobi|mp3|mp4|m4a|m4v|mkv|mov|avi|wmv|webm|ogg|wav|flac|aac|gif|png|jpe?g|svg|webp|ico|woff2?|ttf|otf|eot|xml|json|rss|atom)(\\?|#|$)/i;
+              const a = Array.from(document.querySelectorAll('a[href]'));
+              return a.map(x => x.href)
+                .filter(h => /^https?:/i.test(h))
+                .filter(h => !h.includes('#'))
+                .filter(h => !DL.test(h))
+                .filter(h => {
+                  const el = a.find(x => x.href === h);
+                  if (!el) return true;
+                  // <a download> explicitly requests a download
+                  if (el.hasAttribute('download')) return false;
+                  if (/^(attachment|download)/i.test(el.getAttribute('rel') || '')) return false;
+                  return true;
+                });
+            })();
           `);
         } catch (_) { break; }
         if (!state.running) break;

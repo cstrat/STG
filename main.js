@@ -21,6 +21,7 @@ function bumpBytes(id, deltaTx, deltaRx) {
 
 app.once('ready', () => {
   const sess = session.fromPartition('persist:stg-preview');
+
   sess.webRequest.onSendHeaders({ urls: ['*://*/*'] }, (details) => {
     const hdrs = details.requestHeaders || {};
     const size = Object.entries(hdrs).reduce((s, [k, v]) => s + k.length + String(v).length + 4, 0) + (details.url || '').length + 50;
@@ -32,6 +33,23 @@ app.once('ready', () => {
     const cl   = hdrs['content-length'] || hdrs['Content-Length'];
     const sz   = cl ? parseInt(Array.isArray(cl) ? cl[0] : cl, 10) : NaN;
     bumpBytes(details.webContentsId, 0, Number.isFinite(sz) ? sz : 8000);
+  });
+
+  // ── Safety: suppress every user-facing dialog the crawler could trigger ──
+  // A page linking to a PDF / ZIP / EXE etc. would otherwise pop the OS save
+  // dialog mid-demo. Cancel every download before it starts.
+  sess.on('will-download', (e) => e.preventDefault());
+
+  // Silently deny permission requests (geolocation, notifications, mic, camera,
+  // clipboard-read, etc.) so auto-playing sites can't prompt the user.
+  sess.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  sess.setPermissionCheckHandler(() => false);
+
+  // Suppress window.open / target="_blank" popups from any crawled page.
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // Cancel downloads that sneak through outside the preview session too
+    contents.session.on('will-download', (e) => e.preventDefault());
   });
 });
 
