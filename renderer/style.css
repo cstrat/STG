@@ -867,26 +867,24 @@ html, body {
   overflow: hidden;
 }
 
-/* CFG / URL strip buttons — yellow, sized by the grid. */
+/* CFG / URL strip buttons — yellow, full stats-bar height so they visually
+   match the category cards. Icon + label stacked vertically, centred. */
 .statsbar-end {
   width: 100%;
-  height: 24px;
-  align-self: start;
-  background: rgba(251, 191, 36, 0.07);
+  height: 100%;                          /* grid cell is full stats-bar height */
+  background: rgba(251, 191, 36, 0.08);
   border: none;
   border-left: 1px solid rgba(251, 191, 36, 0.45);
-  border-bottom: 1px solid rgba(251, 191, 36, 0.45);
   color: var(--cat-video);
   cursor: pointer;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 10px;
   font-family: var(--font);
   transition: color 0.12s, background 0.12s;
   padding: 0;
-  flex-shrink: 0;
 }
 .statsbar-end:hover {
   color: var(--bg);
@@ -895,7 +893,8 @@ html, body {
 
 .statsbar-end #config-arrow,
 .statsbar-end .sbe-icon {
-  font-size: 12px;
+  font-size: 28px;
+  line-height: 1;
   display: inline-block;
   transition: transform 0.2s;
 }
@@ -903,24 +902,9 @@ html, body {
 .statsbar-end:hover .sbe-icon { transform: rotate(45deg); }
 
 .sbe-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.14em;
-}
-
-/* TOTALS card: hide the title-row label; the heading drops into the body */
-.scard.totals .scard-title { visibility: hidden; }
-.scard.totals .scard-body { grid-template-columns: auto 1fr; }
-.scard.totals .totals-heading {
-  grid-column: 1 / -1;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--text-bright);
-  padding: 2px 0 4px;
-  text-align: left;
-  margin-bottom: 2px;
-  border-bottom: 1px solid var(--border-dim);
+  letter-spacing: 0.16em;
 }
 
 .scard {

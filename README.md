@@ -1,10 +1,10 @@
 # STG — SASE Traffic Generator
 
-**Current version: 1.2.5**
+**Current version: 1.2.6**
 
 A traffic simulation tool for FortiSASE (and other SASE vendor) demo environments. Generates realistic categorised web traffic through a running SASE agent to demonstrate URL filtering, threat detection, and reporting.
 
-The build fingerprint (`v1.2.5 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
+The build fingerprint (`v1.2.6 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
 
 ## Installing on a Debian/Ubuntu VM (preferred)
 

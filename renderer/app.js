@@ -1293,9 +1293,6 @@
       const toggleHtml = isTotals ? '' :
         `<span class="scard-toggle ${enabled ? 'on' : ''}" style="color:var(${cat.cssVar})" aria-hidden="true"></span>`;
 
-      // TOTALS card has an empty hidden title row — its heading lives inside the body
-      const bodyHeading = isTotals ? `<span class="totals-heading">TOTALS</span>` : '';
-
       // Non-totals title is a <button> so the whole toggle+name is a single label target
       const titleOpen  = isTotals ? `<div class="scard-title">` : `<button type="button" class="scard-title scard-title-btn" data-cat-id="${cat.id}" title="Click to toggle ${cat.label}">`;
       const titleClose = isTotals ? `</div>` : `</button>`;
@@ -1306,7 +1303,6 @@
           <span class="scard-title-text" style="color:var(${cat.cssVar})">${cat.label || cat.id.toUpperCase()}</span>
         ${titleClose}
         <div class="scard-body">
-          ${bodyHeading}
           <span class="sb-label">SENT</span><span class="sb-val" id="sc-${cat.id}-sent">0</span>
           <span class="sb-label">OK</span><span class="sb-val ok" id="sc-${cat.id}-ok">0</span>
           <span class="sb-label">BLK</span><span class="sb-val blocked" id="sc-${cat.id}-blk">0</span>
