@@ -1,6 +1,6 @@
 {
   "name": "stg-sase-traffic-generator",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "SASE Traffic Generator for FortiSASE and other SASE solution demos",
   "main": "main.js",
   "scripts": {
