@@ -61,14 +61,14 @@
         // open for streamDuration seconds so video actually plays. Plain URLs
         // use the category's normal mode (HTTP/BROWSER/MIX).
         urls: [
-          // YouTube — autoplay embed URLs with sound (autoplayPolicy on the
+          // YouTube watch pages — autoplay with sound (autoplayPolicy on the
           // BrowserWindow lets them play without a user gesture).
-          { url: 'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1', stream: true },  // Rickroll
-          { url: 'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1', stream: true },  // Gangnam Style
-          { url: 'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1', stream: true },  // Despacito
-          { url: 'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1', stream: true },  // First-ever YouTube video
-          { url: 'player.vimeo.com/video/76979871?autoplay=1',             stream: true },
-          { url: 'player.vimeo.com/video/347119375?autoplay=1',            stream: true },
+          { url: 'www.youtube.com/watch?v=dQw4w9WgXcQ', stream: true },   // Rickroll
+          { url: 'www.youtube.com/watch?v=9bZkp7q19f0', stream: true },   // Gangnam Style
+          { url: 'www.youtube.com/watch?v=kJQP7kiw5Fk', stream: true },   // Despacito
+          { url: 'www.youtube.com/watch?v=jNQXAC9IVRw', stream: true },   // First-ever YouTube video
+          { url: 'vimeo.com/76979871',                  stream: true },
+          { url: 'vimeo.com/347119375',                 stream: true },
           // Twitch & Kick directory/channel pages — autoplay the live preview
           { url: 'www.twitch.tv/directory/category/just-chatting',                stream: true },
           { url: 'www.twitch.tv/directory',                                       stream: true },
@@ -170,6 +170,7 @@
     stats:        {},         // per-category counters
     mixedState:   {},         // catId -> 'http'|'browser', alternates for MIXED mode
     attackRuns:   [],         // history of completed attack simulations, for the report
+    livePreview:  false,      // in-app tiled webview preview visible?
     attackRunning: false,
     attackAborted: false,
     configOpen:   false,
@@ -208,6 +209,17 @@
   // URLs are either plain strings or { url, stream } objects — unify access:
   function urlOf(entry)    { return typeof entry === 'string' ? entry : (entry && entry.url) || ''; }
   function isStream(entry) { return typeof entry === 'object' && entry !== null && entry.stream === true; }
+
+  // Navigate a category's live-preview webview tile to the given URL
+  function setPreviewTile(catId, url) {
+    const fullUrl = url.startsWith('http') ? url : `https://${url}`;
+    const wv = document.getElementById(`pv-${catId}`);
+    if (wv) {
+      try { wv.src = fullUrl; } catch (_) {}
+    }
+    const tile = document.querySelector(`.preview-tile[data-cat="${catId}"] .preview-url`);
+    if (tile) tile.textContent = fullUrl;
+  }
 
   // ─────────────────────────────────────────────────────────────────
   // UTILITIES
@@ -583,6 +595,11 @@
       const entry = randomItem(cat.urls) || '';
       const url   = urlOf(entry);
       const mode  = isStream(entry) ? 'stream' : resolveMode(catId);
+
+      // Mirror into the in-app live-preview tile when visible
+      if (state.livePreview && IS_ELECTRON && (mode === 'browser' || mode === 'stream')) {
+        setPreviewTile(catId, url);
+      }
 
       let result;
       if (IS_ELECTRON) {
@@ -1764,6 +1781,31 @@ ${attackRunsHtml}
       previewOn = !previewOn;
       localStorage.setItem('stg-preview', previewOn ? '1' : '0');
       applyPreview();
+    });
+
+    // In-app tiled live preview (webview grid). Swaps the log for a 3×2 tile grid.
+    const liveBtn   = document.getElementById('btn-live-preview');
+    const logArea   = document.querySelector('.log-area');
+    const previewArea = document.getElementById('preview-area');
+    state.livePreview = localStorage.getItem('stg-live-preview') === '1';
+    const applyLivePreview = () => {
+      liveBtn.classList.toggle('on', state.livePreview);
+      logArea.classList.toggle('hidden', state.livePreview);
+      previewArea.classList.toggle('hidden', !state.livePreview);
+      liveBtn.title = state.livePreview
+        ? 'Tiled preview ON — click to return to the log view'
+        : 'Toggle in-app tiled preview of BROWSER / STREAM requests';
+    };
+    applyLivePreview();
+    liveBtn.addEventListener('click', () => {
+      state.livePreview = !state.livePreview;
+      localStorage.setItem('stg-live-preview', state.livePreview ? '1' : '0');
+      applyLivePreview();
+      // Reset tiles to blank when turning off so they stop consuming resources
+      if (!state.livePreview) {
+        document.querySelectorAll('.preview-webview').forEach(wv => { try { wv.src = 'about:blank'; } catch (_) {} });
+        document.querySelectorAll('.preview-url').forEach(u => { u.textContent = '—'; });
+      }
     });
     const openReport = () => {
       buildReport();

@@ -76,6 +76,7 @@
     <button class="ftab" data-filter="news">NEWS</button>
     <button class="ftab" data-filter="malicious">MALICIOUS</button>
     <div class="filter-count" id="filter-count">0 / 0 events</div>
+    <button class="ftab-preview" id="btn-live-preview" title="Toggle in-app tiled preview of BROWSER / STREAM requests">👁 LIVE PREVIEW</button>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════════════
@@ -113,6 +114,63 @@
           <div>No traffic yet</div>
           <div class="log-empty-sub">Press START to begin generating traffic</div>
         </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       LIVE PREVIEW — 3×2 grid of non-interactive webviews; each tile
+       mirrors the current BROWSER / STREAM URL for its category.
+  ══════════════════════════════════════════════════════════════════ -->
+  <main class="preview-area hidden" id="preview-area">
+    <div class="preview-grid">
+      <div class="preview-tile" data-cat="ai">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-ai)">ARTIFICIAL INTELLIGENCE</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-ai" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
+      </div>
+      <div class="preview-tile" data-cat="social">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-social)">SOCIAL MEDIA</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-social" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
+      </div>
+      <div class="preview-tile" data-cat="im">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-im)">INSTANT MESSAGING</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-im" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
+      </div>
+      <div class="preview-tile" data-cat="video">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-video)">VIDEO STREAMING</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-video" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
+      </div>
+      <div class="preview-tile" data-cat="news">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-news)">NEWS</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-news" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
+      </div>
+      <div class="preview-tile" data-cat="malicious">
+        <div class="preview-tile-header">
+          <span style="color:var(--cat-malicious)">MALICIOUS</span>
+          <span class="preview-url">—</span>
+        </div>
+        <webview class="preview-webview" id="pv-malicious" src="about:blank" partition="persist:stg-preview"
+                 webpreferences="autoplayPolicy=no-user-gesture-required"></webview>
       </div>
     </div>
   </main>
