@@ -68,8 +68,13 @@
           { url: 'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&mute=1', stream: true },  // First-ever YouTube video
           { url: 'player.vimeo.com/video/76979871?autoplay=1&muted=1',            stream: true },
           { url: 'player.vimeo.com/video/347119375?autoplay=1&muted=1',           stream: true },
+          // Twitch & Kick directory/channel pages — autoplay the live preview
+          { url: 'www.twitch.tv/directory/category/just-chatting',                stream: true },
+          { url: 'www.twitch.tv/directory',                                       stream: true },
+          { url: 'kick.com/browse/categories',                                    stream: true },
+          { url: 'kick.com/xqc',                                                  stream: true },
           // Landing pages — still classified by SASE, regular (non-stream) hits
-          'www.youtube.com/', 'www.twitch.tv/', 'www.netflix.com/',
+          'www.youtube.com/', 'www.twitch.tv/', 'www.netflix.com/', 'kick.com/',
           '9now.nine.com.au/', '7plus.com.au/', 'www.binge.com.au/',
           'www.disneyplus.com/', 'www.primevideo.com/', 'www.stan.com.au/',
         ],
@@ -1675,6 +1680,27 @@ ${attackRunsHtml}
     });
 
     document.getElementById('btn-save-urls').addEventListener('click', closeUrlEditor);
+
+    // RESTORE DEFAULTS — replaces the currently-open tab's URLs with the
+    // shipped defaults from DEFAULT_CONFIG, so upgrades with new seeded URLs
+    // are accessible even after users have persisted a config.
+    document.getElementById('btn-restore-defaults').addEventListener('click', () => {
+      if (!urlEditorActiveTab) return;
+      const which = urlEditorActiveTab;
+      const niceName = which === 'attack'
+        ? 'the attack simulation URLs + port list'
+        : (state.config.categories[which]?.label || which);
+      if (!confirm(`Restore default URLs for ${niceName}?\n\nYour current list will be replaced.`)) return;
+
+      if (which === 'attack') {
+        state.config.settings.attack = JSON.parse(JSON.stringify(DEFAULT_CONFIG.settings.attack));
+      } else {
+        const def = DEFAULT_CONFIG.categories[which];
+        if (def) state.config.categories[which].urls = JSON.parse(JSON.stringify(def.urls));
+      }
+      saveConfig();
+      switchUrlTab(which);   // re-render with fresh defaults visible
+    });
 
     // Export / Import config JSON
     document.getElementById('btn-export-cfg').addEventListener('click', () => {
