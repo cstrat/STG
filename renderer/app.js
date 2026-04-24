@@ -249,7 +249,14 @@
     });
   }
 
-  async function webviewRequest(catId, url, mode, opts) {
+  // Map a classify-response result to our log outcome + response text
+  function interpretCls(cls) {
+    if (cls.challenge) return { outcome: 'challenge', response: 'CF Challenge' };
+    if (cls.blocked)   return { outcome: 'blocked',   response: 'Block page served (HTTP 200)' };
+    return { outcome: 'ok', response: '' };
+  }
+
+  async function webviewRequest(catId, url, mode, opts, onSubEvent) {
     // Avoid overlapping navigations on the same tile
     if (webviewLocks[catId]) await webviewLocks[catId];
     let releaseLock;
@@ -265,37 +272,72 @@
       return { url, mode, outcome: 'err', code: 0, response: 'No preview tile', txBytes: 0, rxBytes: 0 };
     }
 
-    // Update the small URL label above the tile
     setPreviewTile(catId, fullUrl);
 
-    // Reset byte counter for this specific webview
     let wcId;
-    try { wcId = wv.getWebContentsId(); }
-    catch (_) { wcId = null; }
+    try { wcId = wv.getWebContentsId(); } catch (_) { wcId = null; }
     if (wcId != null) await window.electronAPI.webviewBytesReset(wcId);
+
+    const getBytes = async () => wcId != null
+      ? await window.electronAPI.webviewBytesGet(wcId)
+      : { tx: 0, rx: 0 };
+    const classifyNow = async () => {
+      let body = '';
+      try { body = await wv.executeJavaScript('document.body ? document.body.innerText.substring(0, 3000) : ""'); } catch (_) {}
+      const final = (() => { try { return wv.getURL(); } catch { return fullUrl; } })();
+      return window.electronAPI.classifyResponse({
+        status: 200, bodySnippet: body || '', finalUrl: final, sigs: opts.blockSignatures || [],
+      });
+    };
 
     // Initial navigation
     const initial = await navigateWebview(wv, fullUrl);
     if (!initial.ok) {
-      const bytes = wcId != null ? await window.electronAPI.webviewBytesGet(wcId) : { tx: 0, rx: 0 };
+      const bytes = await getBytes();
       releaseLock && releaseLock();
       delete webviewLocks[catId];
       const likelyBlock = Math.abs(initial.code) === 20 || Math.abs(initial.code) === 6;
       return { url, mode, outcome: likelyBlock ? 'blocked' : 'err', code: initial.code || 0, response: initial.desc || 'Load failed', txBytes: bytes.tx, rxBytes: bytes.rx };
     }
 
-    // BROWSER mode: optionally click through crawlDepth - 1 random links
-    if (mode === 'browser' && opts.crawlDepth > 1) {
-      const visited = new Set([fullUrl]);
+    // STREAM mode: hold so video plays/buffers — all bytes count toward the
+    // one primary event. No crawl sub-events for stream.
+    if (mode === 'stream') {
+      const loadTime = Date.now() - startTime;
+      const hold = Math.max(1000, (opts.streamDuration || 15) * 1000 - loadTime);
+      const holdEnd = Date.now() + hold;
+      while (Date.now() < holdEnd) {
+        if (!state.running) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    // Classify / snap bytes for the PRIMARY event (the URL the category was
+    // scheduled to hit). Crawl hops come as separate sub-events below.
+    const primaryCls    = await classifyNow();
+    const primaryBytes  = await getBytes();
+    const primaryInterp = state.running ? interpretCls(primaryCls) : { outcome: 'err', response: 'Stopped' };
+
+    const primary = {
+      url, mode,
+      outcome: primaryInterp.outcome,
+      code:    primaryInterp.outcome === 'err' ? 0 : 200,
+      response: primaryInterp.response,
+      txBytes: primaryBytes.tx,
+      rxBytes: primaryBytes.rx,
+    };
+
+    // BROWSER mode: click through crawlDepth - 1 random links. Each hop is
+    // emitted as its own log event via onSubEvent with its own byte delta.
+    if (mode === 'browser' && opts.crawlDepth > 1 && state.running) {
+      const visited   = new Set([fullUrl]);
+      let   prevBytes = primaryBytes;
+
       for (let i = 1; i < opts.crawlDepth; i++) {
         if (!state.running) break;
+
         let links = [];
         try {
-          // Collect only http(s) links; skip fragments, mailto/tel/javascript,
-          // and anything that looks like a file download (PDF, archive,
-          // installer, video, office doc, etc.) — the session's will-download
-          // blocker catches the rest, but avoiding them in the first place
-          // keeps the crawl on real HTML pages.
           links = await wv.executeJavaScript(`
             (function(){
               const DL = /\\.(pdf|zip|tar|gz|tgz|bz2|7z|rar|dmg|iso|exe|msi|pkg|apk|deb|rpm|jar|bin|bat|cmd|sh|ps1|doc|docx|xls|xlsx|ppt|pptx|rtf|odt|ods|odp|csv|tsv|epub|mobi|mp3|mp4|m4a|m4v|mkv|mov|avi|wmv|webm|ogg|wav|flac|aac|gif|png|jpe?g|svg|webp|ico|woff2?|ttf|otf|eot|xml|json|rss|atom)(\\?|#|$)/i;
@@ -307,7 +349,6 @@
                 .filter(h => {
                   const el = a.find(x => x.href === h);
                   if (!el) return true;
-                  // <a download> explicitly requests a download
                   if (el.hasAttribute('download')) return false;
                   if (/^(attachment|download)/i.test(el.getAttribute('rel') || '')) return false;
                   return true;
@@ -316,59 +357,48 @@
           `);
         } catch (_) { break; }
         if (!state.running) break;
+
         const available = (links || []).filter(l => !visited.has(l));
         if (available.length === 0) break;
+
         const next = available[Math.floor(Math.random() * available.length)];
         setPreviewTile(catId, next);
         const r = await navigateWebview(wv, next);
         visited.add(next);
-        if (!r.ok) break;
+
+        const nowBytes = await getBytes();
+        const delta    = { tx: nowBytes.tx - prevBytes.tx, rx: nowBytes.rx - prevBytes.rx };
+        prevBytes = nowBytes;
+
+        if (!r.ok) {
+          if (onSubEvent) {
+            const likelyBlock = Math.abs(r.code) === 20 || Math.abs(r.code) === 6;
+            onSubEvent({
+              url: next, mode,
+              outcome: likelyBlock ? 'blocked' : 'err',
+              code:    r.code || 0,
+              response: `↪ crawl #${i} — ${r.desc || 'Load failed'}`,
+              txBytes: delta.tx, rxBytes: delta.rx,
+            });
+          }
+          break;
+        }
+
+        const hopCls    = await classifyNow();
+        const hopInterp = state.running ? interpretCls(hopCls) : { outcome: 'err', response: 'Stopped' };
+        if (onSubEvent) onSubEvent({
+          url: next, mode,
+          outcome: hopInterp.outcome,
+          code:    hopInterp.outcome === 'err' ? 0 : 200,
+          response: hopInterp.response ? `↪ crawl #${i} — ${hopInterp.response}` : `↪ crawl #${i}`,
+          txBytes: delta.tx, rxBytes: delta.rx,
+        });
       }
-    }
-
-    // STREAM mode: hold the tile on the current page so video plays/buffers.
-    // Poll state.running so STOP can break out instantly instead of waiting
-    // up to streamDuration seconds for the timer to fire.
-    if (mode === 'stream') {
-      const loadTime = Date.now() - startTime;
-      const hold = Math.max(1000, (opts.streamDuration || 15) * 1000 - loadTime);
-      const holdEnd = Date.now() + hold;
-      while (Date.now() < holdEnd) {
-        if (!state.running) break;
-        await new Promise(r => setTimeout(r, 200));
-      }
-    }
-
-    // Classify the final landed page
-    let bodyText = '';
-    try { bodyText = await wv.executeJavaScript('document.body ? document.body.innerText.substring(0, 3000) : ""'); } catch (_) {}
-    const finalUrl = (() => { try { return wv.getURL(); } catch { return fullUrl; } })();
-    const cls = await window.electronAPI.classifyResponse({
-      status: 200, bodySnippet: bodyText || '', finalUrl, sigs: opts.blockSignatures || [],
-    });
-
-    const bytes = wcId != null ? await window.electronAPI.webviewBytesGet(wcId) : { tx: 0, rx: 0 };
-
-    let outcome, response;
-    if (!state.running) {
-      // User hit STOP while this request was in flight — surface that in the log
-      outcome = 'err';
-      response = 'Stopped';
-    } else if (cls.challenge) {
-      outcome = 'challenge';
-      response = 'CF Challenge';
-    } else if (cls.blocked) {
-      outcome = 'blocked';
-      response = 'Block page served (HTTP 200)';
-    } else {
-      outcome = 'ok';
-      response = '';
     }
 
     releaseLock && releaseLock();
     delete webviewLocks[catId];
-
-    return { url, mode, outcome, code: outcome === 'err' ? 0 : 200, response, txBytes: bytes.tx, rxBytes: bytes.rx };
+    return primary;
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -685,7 +715,7 @@
   // REAL TRAFFIC (Electron mode)
   // ─────────────────────────────────────────────────────────────────
 
-  async function realRequest(catId, url, mode) {
+  async function realRequest(catId, url, mode, onSubEvent) {
     const cat = state.config.categories[catId];
     const { timeout, blockSignatures } = state.config.settings;
 
@@ -697,7 +727,7 @@
         streamDuration: cat.streamDuration || 15,
         crawlDepth: state.config.settings.crawlDepth || 1,
         blockSignatures,
-      });
+      }, onSubEvent);
     } else {
       result = await window.electronAPI.makeHttpRequest({ url, timeout, blockSignatures });
     }
@@ -762,9 +792,18 @@
       const url   = urlOf(entry);
       const mode  = isStream(entry) ? 'stream' : resolveMode(catId);
 
+      // Crawl hops (BROWSER mode) come through here as their own log events
+      const emitHop = (hop) => addLogEvent({
+        id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        ts: Date.now(),
+        timeStr: fmtTime(new Date()),
+        category: catId,
+        ...hop,
+      });
+
       let result;
       if (IS_ELECTRON) {
-        try { result = await realRequest(catId, url, mode); } catch (e) {
+        try { result = await realRequest(catId, url, mode, emitHop); } catch (e) {
           result = { url, mode, outcome: 'err', code: 0, response: String(e.message).slice(0, 60), txBytes: 0, rxBytes: 0 };
         }
       } else {

@@ -1,10 +1,10 @@
 # STG — SASE Traffic Generator
 
-**Current version: 1.1.0**
+**Current version: 1.2.0**
 
-A professional traffic simulation tool for FortiSASE (and other SASE vendor) demo environments. Generates realistic categorised web traffic through a running SASE agent, making it easy to demonstrate URL filtering, threat detection, and reporting capabilities.
+A traffic simulation tool for FortiSASE (and other SASE vendor) demo environments. Generates realistic categorised web traffic through a running SASE agent to demonstrate URL filtering, threat detection, and reporting.
 
-The build fingerprint (`v1.1.0 · <git-hash>`) is shown in the top bar of the app so reports and bug reports can be tied back to a specific build.
+The build fingerprint (`v1.2.0 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
 
 ---
 
@@ -12,17 +12,22 @@ The build fingerprint (`v1.1.0 · <git-hash>`) is shown in the top bar of the ap
 
 | Feature | Detail |
 |---|---|
-| **Traffic Categories** | Artificial Intelligence, Social Media, Instant Messaging, Video Streaming, News, Malicious/Test |
-| **Configurable URLs** | Every URL in every category is editable via the ⚙ cog editor (separate tab for attack vectors) |
-| **Speed Control** | Per-category: Slow (15s), Medium (6s), Fast (2s) between requests |
-| **Request Modes** | Per-category: HTTP, BROWSER (hidden Chromium window), or MIXED (alternates per request) |
-| **Cyber Attack Simulation** | Pre-launch overlay with vector toggles: port scans, EICAR downloads, C2 beacons, phishing, exfiltration |
-| **Cloudflare Challenge Detection** | Separate CHALLENGE status distinguishes CF/CAPTCHA pages from real SASE blocks |
-| **Live Log** | Colour-coded by category and outcome, filterable, newest-first |
-| **Per-Category Stats** | Running counters for sent/OK/BLK/CHA/WRN/ERR + TX/RX bytes |
-| **Reports** | Export a self-contained HTML report with summary and full event log |
-| **Persistent Config** | URL lists and settings survive app restarts |
-| **Splash/About** | First-launch tour with status-guide, re-triggered by the **?** button or any version bump |
+| **Traffic Categories** | Artificial Intelligence, Social Media, Instant Messaging, Video Streaming, News, Malicious |
+| **Configurable URLs** | Every URL in every category is editable via the ⚙ URL SETTINGS editor (separate tab for attack vectors). **RESTORE DEFAULTS** button resets any tab to the shipped list. |
+| **Speed Control** | Per-category: Slow (15s), Medium (6s), Fast (2s) — only applies to HTTP mode, since BROWSER/STREAM are naturally paced by their own work. |
+| **Request Modes** | Per-category: **HTTP** (Node `electron.net`), **BROWSER** (Chromium webview with crawl), **MIX** (alternates per request). |
+| **Stream Flag (video)** | Per-URL toggle on the Video tab marks a URL as streaming — the webview holds for 15 s so autoplaying video actually plays through (YouTube, Vimeo, Twitch, Kick, etc.). |
+| **Crawl Depth** | BROWSER mode clicks through `crawlDepth − 1` random on-page links after the initial load. Each hop is logged as its own event with its own byte delta. |
+| **Live Preview Tiles** | **👁 LIVE PREVIEW** toggle replaces the log with a 3 × 2 grid of live `<webview>` tiles — see (and hear) what each category is loading in real time. Same webview is the measurement source so there are no duplicate loads. |
+| **Cyber Attack Simulation** | Pre-launch overlay with toggles: port scans, EICAR downloads, C2 beacons, phishing, exfiltration. Full per-run history in the report. |
+| **Cloudflare Challenge Detection** | Separate CHALLENGE status distinguishes CF/CAPTCHA pages from real SASE blocks. |
+| **Safety** | Downloads are cancelled before any save-dialog appears. Permission prompts (notifications, mic, camera, geolocation) are silently denied. `window.open` popups are blocked. |
+| **Parallel Execution** | All enabled categories fire their first request immediately on START — no waiting for the speed interval before anything moves. |
+| **Live Log** | Colour-coded by category and outcome, filterable, newest-first. Crawl hops marked with ↪. |
+| **Per-Category Stats** | Running counters for SENT / OK / BLK / CHA / WRN / ERR + TX / RX bytes. Toggle per-category on/off by clicking the category name in the stats bar. |
+| **Reports** | Export a self-contained HTML report: summary, per-category breakdown, attack simulation history, and full event log. |
+| **Persistent Config** | URL lists and settings survive app restarts. |
+| **Splash/About** | First-launch tour with status guide + GitHub link, shown every launch (dismissable with GET STARTED or Escape) and re-openable via the **?** button. |
 
 ---
 
