@@ -1,0 +1,50 @@
+{
+  "name": "stg-sase-traffic-generator",
+  "version": "1.1.0",
+  "description": "SASE Traffic Generator for FortiSASE and other SASE solution demos",
+  "main": "main.js",
+  "scripts": {
+    "start":             "node generate-version.js && electron .",
+    "genver":            "node generate-version.js",
+    "build:linux-x64":   "node generate-version.js && electron-builder --linux AppImage --x64",
+    "build:linux-arm64": "node generate-version.js && electron-builder --linux AppImage --arm64",
+    "build:linux":       "node generate-version.js && electron-builder --linux AppImage --x64 --arm64",
+    "build:win":         "node generate-version.js && electron-builder --win portable --x64",
+    "build":             "node generate-version.js && electron-builder --linux AppImage --x64 --arm64 --win portable"
+  },
+  "devDependencies": {
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.sase.traffic-generator",
+    "productName": "STG - SASE Traffic Generator",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "extraResources": [
+      { "from": "build/icon.png", "to": "icon.png" }
+    ],
+    "linux": {
+      "target": "AppImage",
+      "category": "Network",
+      "maintainer": "STG",
+      "icon": "build/icons"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}

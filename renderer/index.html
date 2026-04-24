@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STG — SASE Traffic Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TOP BAR — status, live stats, start/attack controls
+  ══════════════════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="brand-text">SASE TRAFFIC GENERATOR</span>
+      <span class="brand-version" id="brand-version" title="Build fingerprint"></span>
+    </div>
+
+    <div class="topbar-stats">
+      <div class="tstat">
+        <span class="tstat-label">uptime</span>
+        <span class="tstat-value" id="uptime">00:00:00</span>
+      </div>
+      <span class="tstat-sep">·</span>
+      <div class="tstat">
+        <span class="tstat-label">rate</span>
+        <span class="tstat-value" id="rate-display">0.0/min</span>
+      </div>
+      <span class="tstat-sep">·</span>
+      <div class="tstat">
+        <span class="tstat-arrow up">↑</span>
+        <span class="tstat-value" id="tx-rate">0B/s</span>
+      </div>
+      <div class="tstat">
+        <span class="tstat-arrow dn">↓</span>
+        <span class="tstat-value" id="rx-rate">0B/s</span>
+      </div>
+      <span class="tstat-sep">·</span>
+      <div class="tstat">
+        <span class="tstat-label">total</span>
+        <span class="tstat-value" id="total-count">0</span>
+      </div>
+      <div class="tstat">
+        <span class="tstat-arrow up">↑</span>
+        <span class="tstat-value" id="total-tx">0</span>
+      </div>
+      <div class="tstat">
+        <span class="tstat-arrow dn">↓</span>
+        <span class="tstat-value" id="total-rx">0</span>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <button class="btn-topbar-reset hidden" id="btn-topbar-reset" title="Clear log and reset all stats">↻ RESET</button>
+      <button class="btn-topbar-report hidden" id="btn-topbar-report" title="Export report of the run">📋 REPORT</button>
+      <button class="btn-start" id="btn-start">▶ START</button>
+      <button class="btn-attack" id="btn-attack">⚡ ATTACK</button>
+      <button class="btn-info" id="btn-info" title="About STG">?</button>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FILTER TABS
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="filtertabs">
+    <button class="ftab active" data-filter="all">ALL</button>
+    <button class="ftab" data-filter="ai">ARTIFICIAL</button>
+    <button class="ftab" data-filter="social">SOCIAL</button>
+    <button class="ftab" data-filter="im">INSTANT</button>
+    <button class="ftab" data-filter="video">VIDEO</button>
+    <button class="ftab" data-filter="news">NEWS</button>
+    <button class="ftab" data-filter="malicious">MALICIOUS</button>
+    <div class="filter-count" id="filter-count">0 / 0 events</div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       LOG TABLE — main content area
+  ══════════════════════════════════════════════════════════════════ -->
+  <main class="log-area">
+    <div class="log-scroll" id="log-scroll">
+      <table class="log-table">
+        <colgroup>
+          <col class="col-time">
+          <col class="col-cat">
+          <col class="col-status">
+          <col class="col-mode">
+          <col class="col-code">
+          <col class="col-url">
+          <col class="col-response">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>TIME</th>
+            <th>CATEGORY</th>
+            <th>STATUS</th>
+            <th>MODE</th>
+            <th>CODE</th>
+            <th>URL</th>
+            <th class="th-right">RESPONSE</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+        </tbody>
+      </table>
+      <div class="log-empty" id="log-empty">
+        <div class="log-empty-inner">
+          <div class="log-empty-icon">◈</div>
+          <div>No traffic yet</div>
+          <div class="log-empty-sub">Press START to begin generating traffic</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       CONFIG PANEL — expands UPWARD from the bar below
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="config-panel" id="config-panel">
+    <div class="config-panel-inner">
+      <div class="config-categories" id="config-categories"></div>
+      <div class="config-divider"></div>
+      <div class="config-global">
+        <div class="cg-row">
+          <span class="cg-label">TIMEOUT</span>
+          <input type="number" class="cg-input-num" id="timeout-val" value="15" min="1" max="60">
+          <span class="cg-unit">s</span>
+          <span class="cg-label" style="margin-left:20px">CRAWL DEPTH</span>
+          <input type="range" class="cg-range" id="crawl-depth" min="1" max="5" value="1">
+          <span class="cg-badge" id="crawl-depth-val">1</span>
+        </div>
+        <div class="cg-row">
+          <span class="cg-label">BLOCK SIGNATURES</span>
+          <div class="sig-tags" id="sig-tags"></div>
+          <button class="btn-mini" id="btn-add-sig">+ ADD</button>
+        </div>
+        <div class="cg-row cg-actions">
+          <span class="cg-sep"></span>
+          <button class="btn-cfg accent" id="btn-export-report">EXPORT REPORT</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       STATS BAR — per-category cards, with CFG + URL controls on the right
+  ══════════════════════════════════════════════════════════════════ -->
+  <footer class="statsbar">
+    <div class="stats-cards" id="stats-cards">
+      <!-- Generated by app.js — each card has toggle + name + counters -->
+    </div>
+    <button class="statsbar-end" id="config-toggle" title="Toggle configuration panel">
+      <span id="config-arrow">▲</span>
+      <span class="sbe-label">CONFIGURATION</span>
+    </button>
+    <button class="statsbar-end" id="cog-btn" title="Edit URLs per category">
+      <span class="sbe-icon">⚙</span>
+      <span class="sbe-label">URL SETTINGS</span>
+    </button>
+  </footer>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       MODAL — URL Category Editor (cog)
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="url-modal-overlay">
+    <div class="modal url-editor-modal">
+      <div class="modal-header">
+        <span class="modal-title">⚙ URL &amp; DOMAIN CONFIGURATION</span>
+        <button class="modal-close" id="url-modal-close">✕</button>
+      </div>
+      <!-- Tab bar sits outside the scrollable body -->
+      <div class="url-modal-tabs" id="url-modal-tabs">
+        <!-- Generated by app.js -->
+      </div>
+      <div class="modal-body url-editor-body" id="url-modal-body">
+        <!-- Tab content generated by app.js -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cfg" id="btn-import-cfg">IMPORT JSON</button>
+        <button class="btn-cfg" id="btn-export-cfg">EXPORT JSON</button>
+        <button class="btn-cfg accent" id="btn-save-urls">SAVE &amp; CLOSE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       MODAL — Report
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="report-modal-overlay">
+    <div class="modal report-modal">
+      <div class="modal-header">
+        <span class="modal-title">📋 TEST REPORT</span>
+        <button class="modal-close" id="report-modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="report-body">
+        <!-- Generated on demand -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cfg accent" id="btn-download-report">DOWNLOAD HTML</button>
+        <button class="btn-cfg" id="btn-print-report">PRINT</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       SPLASH / ABOUT — shown on first launch or via the ? button
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="splash-overlay hidden" id="splash-overlay">
+    <div class="splash-panel">
+      <div class="splash-logo">
+        <div class="splash-bars">
+          <span style="background:var(--cat-ai);        width:90%"></span>
+          <span style="background:var(--cat-social);    width:78%"></span>
+          <span style="background:var(--cat-im);        width:66%"></span>
+          <span style="background:var(--cat-video);     width:54%"></span>
+          <span style="background:var(--cat-news);      width:42%"></span>
+          <span style="background:var(--cat-malicious); width:30%"></span>
+        </div>
+        <div class="splash-wordmark">STG</div>
+      </div>
+      <div class="splash-title">SASE TRAFFIC GENERATOR</div>
+      <div class="splash-tagline">
+        Generate realistic categorised web traffic through your SASE client to<br>
+        demonstrate URL filtering, threat detection, and reporting.
+      </div>
+
+      <div class="splash-features">
+        <div class="splash-feature"><span class="sf-dot" style="background:var(--cat-ai)"></span>Six traffic categories with fully editable URL lists</div>
+        <div class="splash-feature"><span class="sf-dot" style="background:var(--cat-social)"></span>Per-category speed and request mode (HTTP / Browser / Mixed)</div>
+        <div class="splash-feature"><span class="sf-dot" style="background:var(--cat-attack)"></span>One-click cyber attack simulation with configurable vectors</div>
+        <div class="splash-feature"><span class="sf-dot" style="background:var(--cat-news)"></span>Live log + per-category stats + exportable HTML report</div>
+      </div>
+
+      <div class="splash-status-guide">
+        <div class="ssg-title">WHAT YOU'LL SEE IN THE LOG</div>
+        <div class="ssg-grid">
+          <div class="ssg-item">
+            <span class="ssg-status" style="color:var(--ok)">OK</span>
+            <span class="ssg-desc">Traffic reached its destination — passed through your SASE client</span>
+          </div>
+          <div class="ssg-item">
+            <span class="ssg-status" style="color:var(--blocked)">BLOCKED</span>
+            <span class="ssg-desc">SASE filtering blocked the request. HTTP mode usually shows 403; BROWSER mode often returns 200 because the block page itself is served with success — in that case the row says <em>"Block page served (HTTP 200)"</em></span>
+          </div>
+          <div class="ssg-item">
+            <span class="ssg-status" style="color:var(--challenge)">CHALLENGE</span>
+            <span class="ssg-desc">Cloudflare or CAPTCHA challenge page — <em>not</em> a SASE block, bot-check from the origin</span>
+          </div>
+          <div class="ssg-item">
+            <span class="ssg-status" style="color:var(--wrn)">WRN</span>
+            <span class="ssg-desc">Warning — non-success HTTP status such as redirects or 4xx client errors</span>
+          </div>
+          <div class="ssg-item">
+            <span class="ssg-status" style="color:var(--err)">ERR</span>
+            <span class="ssg-desc">Network error — timeout, DNS failure, SSL error, or connection refused</span>
+          </div>
+        </div>
+      </div>
+
+      <button class="splash-cta" id="splash-cta">GET STARTED →</button>
+
+      <div class="splash-support">
+        For support, contact <a href="mailto:chris.stratford@vocus.com.au">chris.stratford@vocus.com.au</a>
+        <a class="splash-github" href="https://github.com/chris-stratford/stg-sase-traffic-generator" target="_blank" rel="noopener" title="STG on GitHub" aria-label="STG on GitHub">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       ATTACK OVERLAY — pre-launch config, then running progress
+  ══════════════════════════════════════════════════════════════════ -->
+  <div class="attack-overlay hidden" id="attack-overlay">
+
+    <!-- ── PRE-LAUNCH PANEL ────────────────────────────────── -->
+    <div class="attack-panel" id="attack-prelaunch">
+      <div class="attack-icon">⚡</div>
+      <div class="attack-title">CYBER ATTACK SIMULATION</div>
+      <div class="attack-subtitle">
+        Select attack vectors below, then launch.<br>
+        Normal traffic will pause for the duration.
+      </div>
+
+      <div class="overlay-toggles" id="overlay-attack-toggles">
+        <!-- Rendered by app.js -->
+      </div>
+
+      <div class="overlay-target-row">
+        <span class="overlay-label">PORT SCAN TARGET</span>
+        <input type="text" class="overlay-target-input" id="overlay-scan-target" placeholder="8.8.8.8">
+        <span class="overlay-hint">edit domains in ⚙ config</span>
+      </div>
+
+      <div class="overlay-actions">
+        <button class="btn-cancel-launch" id="btn-cancel-attack">CANCEL</button>
+        <button class="btn-do-launch" id="btn-do-launch">⚡ LAUNCH ATTACK</button>
+      </div>
+    </div>
+
+    <!-- ── RUNNING PANEL ───────────────────────────────────── -->
+    <div class="attack-panel hidden running-panel" id="attack-running">
+      <div class="attack-icon">⚡</div>
+      <div class="attack-title">CYBER ATTACK SIMULATION</div>
+      <div class="attack-phase" id="attack-phase">Initialising attack vectors...</div>
+      <div class="attack-progress-track">
+        <div class="attack-progress-bar" id="attack-progress-bar"></div>
+      </div>
+      <div class="attack-counters">
+        <div class="ac-item"><span class="ac-label">ATTEMPTS</span><span class="ac-val" id="atk-sent">0</span></div>
+        <div class="ac-item"><span class="ac-label">BLOCKED</span><span class="ac-val blocked" id="atk-blk">0</span></div>
+        <div class="ac-item"><span class="ac-label">PASSED</span><span class="ac-val ok" id="atk-ok">0</span></div>
+      </div>
+
+      <!-- Mini log — streams outcomes as they happen -->
+      <div class="attack-minilog" id="attack-minilog"></div>
+
+      <button class="btn-abort" id="btn-abort-attack">■ ABORT</button>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
