@@ -329,7 +329,10 @@
 
     // BROWSER mode: click through crawlDepth - 1 random links. Each hop is
     // emitted as its own log event via onSubEvent with its own byte delta.
-    if (mode === 'browser' && opts.crawlDepth > 1 && state.running) {
+    // Skip the crawl entirely if the initial page was blocked / CF-challenged
+    // — otherwise we'd be collecting anchors from a SASE block page or a CF
+    // "just a moment" page and chasing those as if they were real content.
+    if (mode === 'browser' && opts.crawlDepth > 1 && state.running && primaryInterp.outcome === 'ok') {
       const visited   = new Set([fullUrl]);
       let   prevBytes = primaryBytes;
 
@@ -393,6 +396,9 @@
           response: hopInterp.response ? `↪ crawl #${i} — ${hopInterp.response}` : `↪ crawl #${i}`,
           txBytes: delta.tx, rxBytes: delta.rx,
         });
+        // If this hop was blocked / challenged, don't keep crawling from
+        // inside the block page — its links aren't from the real site.
+        if (hopInterp.outcome !== 'ok') break;
       }
     }
 
