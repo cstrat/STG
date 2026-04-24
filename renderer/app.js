@@ -212,13 +212,134 @@
 
   // Navigate a category's live-preview webview tile to the given URL
   function setPreviewTile(catId, url) {
-    const fullUrl = url.startsWith('http') ? url : `https://${url}`;
-    const wv = document.getElementById(`pv-${catId}`);
-    if (wv) {
-      try { wv.src = fullUrl; } catch (_) {}
-    }
     const tile = document.querySelector(`.preview-tile[data-cat="${catId}"] .preview-url`);
-    if (tile) tile.textContent = fullUrl;
+    if (tile) tile.textContent = url;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // WEBVIEW REQUEST — runs BROWSER / STREAM requests in the tile's
+  // <webview>, so the thing you see is the thing we measure. Bytes
+  // come from the main-process session hook on persist:stg-preview.
+  // ─────────────────────────────────────────────────────────────────
+
+  // Each category has its own tile webview — serialise per-cat so we don't
+  // navigate one webview while it's still loading the previous URL.
+  const webviewLocks = {};
+
+  function getTileWebview(catId) {
+    return document.getElementById(`pv-${catId}`);
+  }
+
+  // Navigate a webview to a URL and wait for did-finish-load / did-fail-load.
+  // Returns { ok, code, desc } — ok is true on finish, false on fail/timeout.
+  function navigateWebview(wv, fullUrl, timeoutMs = 20000) {
+    return new Promise((resolve) => {
+      let done = false;
+      const onFinish = () => { if (!done) { done = true; cleanup(); resolve({ ok: true }); } };
+      const onFail   = (e) => { if (!done) { done = true; cleanup(); resolve({ ok: false, code: e.errorCode, desc: e.errorDescription }); } };
+      const cleanup = () => {
+        wv.removeEventListener('did-finish-load', onFinish);
+        wv.removeEventListener('did-fail-load',   onFail);
+        clearTimeout(t);
+      };
+      wv.addEventListener('did-finish-load', onFinish);
+      wv.addEventListener('did-fail-load',   onFail);
+      const t = setTimeout(() => { if (!done) { done = true; cleanup(); resolve({ ok: false, code: -7, desc: 'Load timeout' }); } }, timeoutMs);
+      try { wv.src = fullUrl; } catch (e) { onFail({ errorCode: -2, errorDescription: e.message }); }
+    });
+  }
+
+  async function webviewRequest(catId, url, mode, opts) {
+    // Avoid overlapping navigations on the same tile
+    if (webviewLocks[catId]) await webviewLocks[catId];
+    let releaseLock;
+    webviewLocks[catId] = new Promise(r => { releaseLock = r; });
+
+    const startTime = Date.now();
+    const fullUrl   = url.startsWith('http') ? url : `https://${url}`;
+    const wv = getTileWebview(catId);
+
+    if (!wv) {
+      releaseLock && releaseLock();
+      delete webviewLocks[catId];
+      return { url, mode, outcome: 'err', code: 0, response: 'No preview tile', txBytes: 0, rxBytes: 0 };
+    }
+
+    // Update the small URL label above the tile
+    setPreviewTile(catId, fullUrl);
+
+    // Reset byte counter for this specific webview
+    let wcId;
+    try { wcId = wv.getWebContentsId(); }
+    catch (_) { wcId = null; }
+    if (wcId != null) await window.electronAPI.webviewBytesReset(wcId);
+
+    // Initial navigation
+    const initial = await navigateWebview(wv, fullUrl);
+    if (!initial.ok) {
+      const bytes = wcId != null ? await window.electronAPI.webviewBytesGet(wcId) : { tx: 0, rx: 0 };
+      releaseLock && releaseLock();
+      delete webviewLocks[catId];
+      const likelyBlock = Math.abs(initial.code) === 20 || Math.abs(initial.code) === 6;
+      return { url, mode, outcome: likelyBlock ? 'blocked' : 'err', code: initial.code || 0, response: initial.desc || 'Load failed', txBytes: bytes.tx, rxBytes: bytes.rx };
+    }
+
+    // BROWSER mode: optionally click through crawlDepth - 1 random links
+    if (mode === 'browser' && opts.crawlDepth > 1) {
+      const visited = new Set([fullUrl]);
+      for (let i = 1; i < opts.crawlDepth; i++) {
+        let links = [];
+        try {
+          links = await wv.executeJavaScript(`
+            Array.from(document.querySelectorAll('a[href]'))
+              .map(a => a.href)
+              .filter(h => /^https?:/.test(h))
+              .filter(h => !h.includes('#'))
+          `);
+        } catch (_) { break; }
+        const available = (links || []).filter(l => !visited.has(l));
+        if (available.length === 0) break;
+        const next = available[Math.floor(Math.random() * available.length)];
+        setPreviewTile(catId, next);
+        const r = await navigateWebview(wv, next);
+        visited.add(next);
+        if (!r.ok) break;
+      }
+    }
+
+    // STREAM mode: hold the tile on the current page so video plays/buffers
+    if (mode === 'stream') {
+      const loadTime = Date.now() - startTime;
+      const hold = Math.max(1000, (opts.streamDuration || 15) * 1000 - loadTime);
+      await new Promise(r => setTimeout(r, hold));
+    }
+
+    // Classify the final landed page
+    let bodyText = '';
+    try { bodyText = await wv.executeJavaScript('document.body ? document.body.innerText.substring(0, 3000) : ""'); } catch (_) {}
+    const finalUrl = (() => { try { return wv.getURL(); } catch { return fullUrl; } })();
+    const cls = await window.electronAPI.classifyResponse({
+      status: 200, bodySnippet: bodyText || '', finalUrl, sigs: opts.blockSignatures || [],
+    });
+
+    const bytes = wcId != null ? await window.electronAPI.webviewBytesGet(wcId) : { tx: 0, rx: 0 };
+
+    let outcome, response;
+    if (cls.challenge) {
+      outcome = 'challenge';
+      response = 'CF Challenge';
+    } else if (cls.blocked) {
+      outcome = 'blocked';
+      response = 'Block page served (HTTP 200)';
+    } else {
+      outcome = 'ok';
+      response = '';
+    }
+
+    releaseLock && releaseLock();
+    delete webviewLocks[catId];
+
+    return { url, mode, outcome, code: 200, response, txBytes: bytes.tx, rxBytes: bytes.rx };
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -540,10 +661,14 @@
     const { timeout, blockSignatures } = state.config.settings;
 
     let result;
-    if (mode === 'stream') {
-      result = await window.electronAPI.makeStreamRequest({ url, duration: cat.streamDuration || 15, blockSignatures });
-    } else if (mode === 'browser') {
-      result = await window.electronAPI.makeBrowserRequest({ url, blockSignatures });
+    if (mode === 'stream' || mode === 'browser') {
+      // Both BROWSER and STREAM run inside the category's <webview> tile —
+      // single source of truth, byte counts come from the session hook in main.
+      result = await webviewRequest(catId, url, mode, {
+        streamDuration: cat.streamDuration || 15,
+        crawlDepth: state.config.settings.crawlDepth || 1,
+        blockSignatures,
+      });
     } else {
       result = await window.electronAPI.makeHttpRequest({ url, timeout, blockSignatures });
     }
@@ -580,26 +705,33 @@
   // TRAFFIC ENGINE — per-category scheduling
   // ─────────────────────────────────────────────────────────────────
 
-  function scheduleNext(catId) {
+  // How long to wait before the NEXT request fires for this category. HTTP
+  // mode honours the SLOW/MED/FAST speed toggle; BROWSER and STREAM are
+  // naturally paced by their own work (page load + crawl, or the stream
+  // hold) so we use a small fixed gap instead of compounding with speed.
+  function nextDelay(cat) {
+    if (cat.mode === 'http') {
+      return (SPEEDS[cat.speed] || SPEEDS.slow) + Math.random() * 1000;
+    }
+    return 400 + Math.random() * 400;
+  }
+
+  function scheduleNext(catId, immediate = false) {
     if (!state.running) return;
     const cat = state.config.categories[catId];
     if (!cat || !cat.enabled) return;
 
-    const interval = SPEEDS[cat.speed] || SPEEDS.slow;
+    // First fire after START is nearly immediate (tiny jitter so all enabled
+    // categories don't hit the exact same millisecond). Subsequent fires
+    // use the mode-aware delay.
+    const delay = immediate ? Math.random() * 250 : nextDelay(cat);
 
     state.timers[catId] = setTimeout(async () => {
       if (!state.running || !cat.enabled) return;
 
-      // Pick the URL first — a URL flagged stream:true overrides the category
-      // mode (MIXED alternation isn't advanced in that case either).
       const entry = randomItem(cat.urls) || '';
       const url   = urlOf(entry);
       const mode  = isStream(entry) ? 'stream' : resolveMode(catId);
-
-      // Mirror into the in-app live-preview tile when visible
-      if (state.livePreview && IS_ELECTRON && (mode === 'browser' || mode === 'stream')) {
-        setPreviewTile(catId, url);
-      }
 
       let result;
       if (IS_ELECTRON) {
@@ -620,15 +752,17 @@
       };
 
       addLogEvent(evt);
-      scheduleNext(catId);
-    }, interval + Math.random() * 1000);  // small jitter
+      scheduleNext(catId, false);
+    }, delay);
   }
 
   function startTraffic() {
     state.running = true;
     state.startTime = state.startTime || Date.now();
+    // All enabled categories fire their first request immediately, then each
+    // chain continues at its own pace.
     Object.keys(state.config.categories).forEach(k => {
-      if (state.config.categories[k].enabled) scheduleNext(k);
+      if (state.config.categories[k].enabled) scheduleNext(k, true);
     });
   }
 
@@ -1763,25 +1897,9 @@ ${attackRunsHtml}
     // (speed/mode bulk actions now live as a row at the bottom of the
     //  category list in the config panel — wired up in renderConfigCategories)
     document.getElementById('btn-topbar-reset').addEventListener('click', resetAll);
-
-    // Preview window toggle — forwards to the main process which then shows
-    // browser/stream BrowserWindows in the bottom-right corner. State is
-    // remembered in localStorage.
-    const previewBtn = document.getElementById('btn-topbar-preview');
-    let previewOn = localStorage.getItem('stg-preview') === '1';
-    const applyPreview = async () => {
-      previewBtn.classList.toggle('on', previewOn);
-      previewBtn.title = previewOn
-        ? 'Corner preview is ON — click to hide'
-        : 'Toggle corner preview window for browser / stream requests';
-      if (IS_ELECTRON) await window.electronAPI.setPreviewMode(previewOn);
-    };
-    applyPreview();
-    previewBtn.addEventListener('click', () => {
-      previewOn = !previewOn;
-      localStorage.setItem('stg-preview', previewOn ? '1' : '0');
-      applyPreview();
-    });
+    // (popup preview removed — LIVE PREVIEW tiles are now the single source
+    //  of rendering AND measurement for BROWSER / STREAM requests.)
+    localStorage.removeItem('stg-preview');
 
     // In-app tiled live preview (webview grid). Swaps the log for a 3×2 tile grid.
     const liveBtn   = document.getElementById('btn-live-preview');

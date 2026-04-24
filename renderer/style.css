@@ -252,25 +252,7 @@ html, body {
 .btn-topbar-reset:hover { background: var(--text-dim); color: var(--bg); border-color: var(--text-dim); }
 .btn-topbar-reset.hidden { display: none; }
 
-.btn-topbar-preview {
-  background: transparent;
-  border: 1px solid var(--text-dim);
-  color: var(--text-dim);
-  font-family: var(--font);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 12px;
-  cursor: pointer;
-  letter-spacing: 0.08em;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.btn-topbar-preview:hover { color: var(--text-bright); border-color: var(--text-bright); }
-.btn-topbar-preview.on {
-  color: var(--ok);
-  border-color: var(--ok);
-  background: rgba(74, 222, 128, 0.08);
-}
-.btn-topbar-preview.on:hover { background: var(--ok); color: var(--bg); }
+/* (popup preview button removed — replaced by the LIVE PREVIEW tile view) */
 
 .btn-info {
   background: transparent;

@@ -1,40 +1,45 @@
-const { app, BrowserWindow, ipcMain, dialog, net, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net, session } = require('electron');
 const path  = require('path');
 const nNet  = require('net');
 const fs    = require('fs');
 
 let mainWindow;
 
-// When true, browser + stream requests show their hidden BrowserWindow as a
-// small always-on-top preview in the bottom-right corner so the user can
-// watch traffic as it happens. Toggled from the renderer via IPC.
-let previewMode = false;
-
-function previewBounds() {
-  const disp = screen.getPrimaryDisplay();
-  const w = 480, h = 290, margin = 24;
-  return {
-    x: disp.workArea.x + disp.workArea.width  - w - margin,
-    y: disp.workArea.y + disp.workArea.height - h - margin,
-    width: w, height: h,
-  };
+// ─── Per-webContents byte tracking for LIVE PREVIEW webviews ─────────────
+// Hooks the shared persist:stg-preview session so bytes sent/received can be
+// attributed to each tile. The renderer snaps counters before/after each
+// request by webContentsId. More accurate than counting single responses
+// because streams/playback fire many requests over the hold window.
+const byteCounts = new Map();
+function bumpBytes(id, deltaTx, deltaRx) {
+  if (id == null) return;
+  const b = byteCounts.get(id) || { tx: 0, rx: 0 };
+  b.tx += deltaTx || 0;
+  b.rx += deltaRx || 0;
+  byteCounts.set(id, b);
 }
 
-// Apply preview-mode window treatment — shows in corner, click-through, floating
-function makePreview(win) {
-  try {
-    const b = previewBounds();
-    win.setBounds(b);
-    win.setAlwaysOnTop(true, 'floating');
-    win.setIgnoreMouseEvents(true);
-    win.setSkipTaskbar(true);
-    win.show();
-  } catch (_) {}
-}
+app.once('ready', () => {
+  const sess = session.fromPartition('persist:stg-preview');
+  sess.webRequest.onSendHeaders({ urls: ['*://*/*'] }, (details) => {
+    const hdrs = details.requestHeaders || {};
+    const size = Object.entries(hdrs).reduce((s, [k, v]) => s + k.length + String(v).length + 4, 0) + (details.url || '').length + 50;
+    bumpBytes(details.webContentsId, size, 0);
+  });
+  sess.webRequest.onCompleted({ urls: ['*://*/*'] }, (details) => {
+    if (details.fromCache) return;
+    const hdrs = details.responseHeaders || {};
+    const cl   = hdrs['content-length'] || hdrs['Content-Length'];
+    const sz   = cl ? parseInt(Array.isArray(cl) ? cl[0] : cl, 10) : NaN;
+    bumpBytes(details.webContentsId, 0, Number.isFinite(sz) ? sz : 8000);
+  });
+});
 
-ipcMain.handle('set-preview-mode', (_event, on) => {
-  previewMode = !!on;
-  return previewMode;
+ipcMain.handle('webview-bytes-reset', (_event, webContentsId) => {
+  byteCounts.set(webContentsId, { tx: 0, rx: 0 });
+});
+ipcMain.handle('webview-bytes-get', (_event, webContentsId) => {
+  return byteCounts.get(webContentsId) || { tx: 0, rx: 0 };
 });
 
 function createWindow() {
@@ -195,153 +200,14 @@ ipcMain.handle('make-http-request', (_event, { url, timeout, blockSignatures }) 
   });
 });
 
-// ─── Browser Request (hidden BrowserWindow) ───────────────────────────────────
+// (make-browser-request / make-stream-request removed — BROWSER and STREAM
+//  requests now happen in the renderer via the live-preview <webview> tiles.
+//  Bytes are counted by the persist:stg-preview session hook above; page
+//  content / final URL / block classification are done renderer-side.)
 
-ipcMain.handle('make-browser-request', (_event, { url, blockSignatures }) => {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const fullUrl   = url.startsWith('http') ? url : `https://${url}`;
-    const sigs      = blockSignatures || ['FortiGuard', 'Web Page Blocked', 'fortinet'];
-
-    const win = new BrowserWindow({
-      show: false,
-      width: 1280, height: 720,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        autoplayPolicy: 'no-user-gesture-required',
-      },
-    });
-    if (previewMode) makePreview(win);
-
-    let resolved = false;
-    const done = (result) => {
-      if (!resolved) {
-        resolved = true;
-        try { win.destroy(); } catch (_) {}
-        resolve(result);
-      }
-    };
-
-    const timer = setTimeout(() =>
-      done({ status: 0, statusText: 'Timeout', txBytes: 0, rxBytes: 0, time: 30000, blocked: false, error: 'Browser timeout' }),
-      30000
-    );
-
-    win.webContents.on('did-finish-load', async () => {
-      clearTimeout(timer);
-      const time = Date.now() - startTime;
-      try {
-        const bodyText = await win.webContents.executeJavaScript(
-          'document.body ? document.body.innerText.substring(0, 3000) : ""'
-        );
-        const finalUrl = win.webContents.getURL();
-        const cls = classifyResponse({ status: 200, bodySnippet: bodyText || '', finalUrl, sigs });
-        done({ status: 200, statusText: 'OK', txBytes: 600, rxBytes: 80000, time, ...cls });
-      } catch {
-        done({ status: 200, statusText: 'OK', txBytes: 600, rxBytes: 50000, time, blocked: false, challenge: false });
-      }
-    });
-
-    win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
-      if (!isMainFrame) return;
-      clearTimeout(timer);
-      const likelyBlock = Math.abs(code) === 20 || Math.abs(code) === 6;
-      done({ status: code, statusText: desc, txBytes: 200, rxBytes: 0, time: Date.now() - startTime, blocked: likelyBlock, challenge: false, error: desc });
-    });
-
-    win.loadURL(fullUrl);
-  });
-});
-
-// ─── Stream Request (video mode) ──────────────────────────────────────────────
-// Hidden BrowserWindow that stays alive for `duration` seconds so videos on
-// YouTube / Vimeo / etc. actually buffer and play, generating real streaming
-// traffic. Byte totals come from session.webRequest instead of a single GET.
-
-ipcMain.handle('make-stream-request', (_event, { url, duration, blockSignatures }) => {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const fullUrl   = url.startsWith('http') ? url : `https://${url}`;
-    const sigs      = blockSignatures || ['FortiGuard', 'Web Page Blocked', 'fortinet'];
-    const streamMs  = Math.max(3, Math.min(120, duration || 15)) * 1000;
-
-    const win = new BrowserWindow({
-      show: false,
-      width: 1280,
-      height: 720,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        autoplayPolicy: 'no-user-gesture-required',  // let video auto-play
-        backgroundThrottling: false,                 // keep playback active while hidden
-      },
-    });
-    if (previewMode) makePreview(win);
-
-    // Count real bytes crossing the network. content-length covers most
-    // assets; chunked streaming (HLS/DASH) falls back to a small per-chunk
-    // estimate since the header isn't sent.
-    let rxBytes  = 0;
-    let txBytes  = 0;
-    let requests = 0;
-
-    const webReq = win.webContents.session.webRequest;
-    webReq.onSendHeaders({ urls: ['*://*/*'] }, (details) => {
-      requests++;
-      const hdrs = details.requestHeaders || {};
-      txBytes += Object.entries(hdrs).reduce((s, [k, v]) => s + k.length + String(v).length + 4, 0) + (details.url || '').length + 50;
-    });
-    webReq.onCompleted({ urls: ['*://*/*'] }, (details) => {
-      if (details.fromCache) return;
-      const hdrs = details.responseHeaders || {};
-      const cl   = hdrs['content-length'] || hdrs['Content-Length'];
-      const size = cl ? parseInt(Array.isArray(cl) ? cl[0] : cl, 10) : NaN;
-      rxBytes += Number.isFinite(size) ? size : 8000;  // fallback estimate per response
-    });
-
-    let settled = false;
-    const done = (result) => {
-      if (settled) return;
-      settled = true;
-      try { win.destroy(); } catch (_) {}
-      resolve(result);
-    };
-
-    // Hard upper bound in case the page never fires did-finish-load
-    const hardTimer = setTimeout(() => {
-      done({ status: 0, statusText: 'Stream timeout', txBytes, rxBytes, time: Date.now() - startTime, blocked: false, challenge: false, error: 'Page never finished loading' });
-    }, streamMs + 15000);
-
-    win.webContents.once('did-finish-load', () => {
-      const loadTime  = Date.now() - startTime;
-      const remaining = Math.max(1000, streamMs - loadTime);
-      // Hold the window open so video can buffer/play, then classify the result.
-      setTimeout(async () => {
-        let bodyText = '';
-        try {
-          bodyText = await win.webContents.executeJavaScript('document.body ? document.body.innerText.substring(0, 3000) : ""');
-        } catch (_) {}
-        const finalUrl = win.webContents.getURL();
-        const cls = classifyResponse({ status: 200, bodySnippet: bodyText, finalUrl, sigs });
-        clearTimeout(hardTimer);
-        done({ status: 200, statusText: 'OK', txBytes, rxBytes, time: Date.now() - startTime, ...cls });
-      }, remaining);
-    });
-
-    win.webContents.on('did-fail-load', (_e, code, desc, _u, isMainFrame) => {
-      if (!isMainFrame) return;
-      clearTimeout(hardTimer);
-      const likelyBlock = Math.abs(code) === 20 || Math.abs(code) === 6;
-      done({ status: code, statusText: desc, txBytes, rxBytes, time: Date.now() - startTime, blocked: likelyBlock, challenge: false, error: desc });
-    });
-
-    win.loadURL(fullUrl).catch(e => {
-      clearTimeout(hardTimer);
-      done({ status: 0, statusText: e.message, txBytes, rxBytes, time: Date.now() - startTime, blocked: false, challenge: false, error: e.message });
-    });
-  });
-});
+// Expose classifyResponse via IPC so the renderer can use the same block-
+// detection logic it used to for HTTP mode responses.
+ipcMain.handle('classify-response', (_event, args) => classifyResponse(args));
 
 // ─── Port Scan ────────────────────────────────────────────────────────────────
 
