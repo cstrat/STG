@@ -3,6 +3,12 @@ const path  = require('path');
 const nNet  = require('net');
 const fs    = require('fs');
 
+// Ubuntu 24+ + AppImage extract-and-run can't set chrome-sandbox setuid root,
+// and AppArmor blocks the user-namespace fallback. Disable the sandbox at
+// startup so the app launches cleanly on both fresh VMs and dev machines.
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-setuid-sandbox');
+
 let mainWindow;
 
 // ─── Per-webContents byte tracking for LIVE PREVIEW webviews ─────────────

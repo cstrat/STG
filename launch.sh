@@ -87,4 +87,4 @@ exec env \
   -u ELECTRON_RUN_AS_NODE \
   APPIMAGE_EXTRACT_AND_RUN=1 \
   LD_LIBRARY_PATH="$HOME/.local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  "$APPIMAGE" "$@"
+  "$APPIMAGE" --no-sandbox --disable-setuid-sandbox "$@"
