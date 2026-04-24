@@ -9,6 +9,13 @@ const fs    = require('fs');
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-setuid-sandbox');
 
+// /dev/shm on hardened VMs (and inside many container/VM images) is either
+// mounted with restrictive permissions or sized too small for Chromium's
+// per-renderer shared-memory segments. Fall back to /tmp so spawning <webview>
+// guest processes does not blow up with "ERR_FAILED loading about:blank" +
+// "/dev/shm: No such process". Slightly slower than tmpfs, but reliable.
+app.commandLine.appendSwitch('disable-dev-shm-usage');
+
 let mainWindow;
 
 // ─── Per-webContents byte tracking for LIVE PREVIEW webviews ─────────────
