@@ -10,7 +10,19 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APPIMAGE=$(find "$SCRIPT_DIR" "$SCRIPT_DIR/dist" -maxdepth 1 -name "*.AppImage" 2>/dev/null | head -1)
+
+# Pick the AppImage that matches this machine's architecture. `uname -m` returns
+# "aarch64" on arm64 and "x86_64" on amd64. Fall back to any AppImage if nothing
+# arch-specific matches (single-arch dev builds).
+MACH=$(uname -m)
+case "$MACH" in
+  aarch64|arm64)  ARCH_PAT='-arm64.AppImage' ;;
+  x86_64|amd64)   ARCH_PAT='-x86_64.AppImage' ;;
+  *)              ARCH_PAT='.AppImage' ;;
+esac
+APPIMAGE=$(find "$SCRIPT_DIR" "$SCRIPT_DIR/dist" -maxdepth 1 -name "*${ARCH_PAT}" 2>/dev/null | head -1)
+# Fall back to any AppImage if no arch-specific match
+[ -z "$APPIMAGE" ] && APPIMAGE=$(find "$SCRIPT_DIR" "$SCRIPT_DIR/dist" -maxdepth 1 -name "*.AppImage" 2>/dev/null | head -1)
 
 if [ -z "$APPIMAGE" ]; then
   echo "ERROR: No AppImage found near $SCRIPT_DIR"
