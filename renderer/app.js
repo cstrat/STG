@@ -719,18 +719,19 @@
     const cat = state.config.categories[catId];
     const { timeout, blockSignatures } = state.config.settings;
 
-    let result;
+    // BROWSER / STREAM come back from webviewRequest already fully interpreted
+    // (outcome / code / response / bytes) — pass straight through so we don't
+    // accidentally zero out the code in the HTTP re-interpretation below.
     if (mode === 'stream' || mode === 'browser') {
-      // Both BROWSER and STREAM run inside the category's <webview> tile —
-      // single source of truth, byte counts come from the session hook in main.
-      result = await webviewRequest(catId, url, mode, {
+      return await webviewRequest(catId, url, mode, {
         streamDuration: cat.streamDuration || 15,
         crawlDepth: state.config.settings.crawlDepth || 1,
         blockSignatures,
       }, onSubEvent);
-    } else {
-      result = await window.electronAPI.makeHttpRequest({ url, timeout, blockSignatures });
     }
+
+    // HTTP mode — raw electron.net response; interpret into a log row below.
+    const result = await window.electronAPI.makeHttpRequest({ url, timeout, blockSignatures });
 
     let outcome, response;
     if (result.error && !result.status) {
