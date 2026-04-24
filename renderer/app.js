@@ -61,13 +61,14 @@
         // open for streamDuration seconds so video actually plays. Plain URLs
         // use the category's normal mode (HTTP/BROWSER/MIX).
         urls: [
-          // YouTube — autoplay embed URLs, muted so autoplay isn't blocked.
-          { url: 'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1', stream: true },  // Rickroll
-          { url: 'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1&mute=1', stream: true },  // Gangnam Style
-          { url: 'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1&mute=1', stream: true },  // Despacito
-          { url: 'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&mute=1', stream: true },  // First-ever YouTube video
-          { url: 'player.vimeo.com/video/76979871?autoplay=1&muted=1',            stream: true },
-          { url: 'player.vimeo.com/video/347119375?autoplay=1&muted=1',           stream: true },
+          // YouTube — autoplay embed URLs with sound (autoplayPolicy on the
+          // BrowserWindow lets them play without a user gesture).
+          { url: 'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1', stream: true },  // Rickroll
+          { url: 'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1', stream: true },  // Gangnam Style
+          { url: 'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1', stream: true },  // Despacito
+          { url: 'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1', stream: true },  // First-ever YouTube video
+          { url: 'player.vimeo.com/video/76979871?autoplay=1',             stream: true },
+          { url: 'player.vimeo.com/video/347119375?autoplay=1',            stream: true },
           // Twitch & Kick directory/channel pages — autoplay the live preview
           { url: 'www.twitch.tv/directory/category/just-chatting',                stream: true },
           { url: 'www.twitch.tv/directory',                                       stream: true },
@@ -1745,6 +1746,25 @@ ${attackRunsHtml}
     // (speed/mode bulk actions now live as a row at the bottom of the
     //  category list in the config panel — wired up in renderConfigCategories)
     document.getElementById('btn-topbar-reset').addEventListener('click', resetAll);
+
+    // Preview window toggle — forwards to the main process which then shows
+    // browser/stream BrowserWindows in the bottom-right corner. State is
+    // remembered in localStorage.
+    const previewBtn = document.getElementById('btn-topbar-preview');
+    let previewOn = localStorage.getItem('stg-preview') === '1';
+    const applyPreview = async () => {
+      previewBtn.classList.toggle('on', previewOn);
+      previewBtn.title = previewOn
+        ? 'Corner preview is ON — click to hide'
+        : 'Toggle corner preview window for browser / stream requests';
+      if (IS_ELECTRON) await window.electronAPI.setPreviewMode(previewOn);
+    };
+    applyPreview();
+    previewBtn.addEventListener('click', () => {
+      previewOn = !previewOn;
+      localStorage.setItem('stg-preview', previewOn ? '1' : '0');
+      applyPreview();
+    });
     const openReport = () => {
       buildReport();
       document.getElementById('report-modal-overlay').classList.remove('hidden');

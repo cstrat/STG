@@ -1,9 +1,41 @@
-const { app, BrowserWindow, ipcMain, dialog, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net, screen } = require('electron');
 const path  = require('path');
 const nNet  = require('net');
 const fs    = require('fs');
 
 let mainWindow;
+
+// When true, browser + stream requests show their hidden BrowserWindow as a
+// small always-on-top preview in the bottom-right corner so the user can
+// watch traffic as it happens. Toggled from the renderer via IPC.
+let previewMode = false;
+
+function previewBounds() {
+  const disp = screen.getPrimaryDisplay();
+  const w = 480, h = 290, margin = 24;
+  return {
+    x: disp.workArea.x + disp.workArea.width  - w - margin,
+    y: disp.workArea.y + disp.workArea.height - h - margin,
+    width: w, height: h,
+  };
+}
+
+// Apply preview-mode window treatment — shows in corner, click-through, floating
+function makePreview(win) {
+  try {
+    const b = previewBounds();
+    win.setBounds(b);
+    win.setAlwaysOnTop(true, 'floating');
+    win.setIgnoreMouseEvents(true);
+    win.setSkipTaskbar(true);
+    win.show();
+  } catch (_) {}
+}
+
+ipcMain.handle('set-preview-mode', (_event, on) => {
+  previewMode = !!on;
+  return previewMode;
+});
 
 function createWindow() {
   // Icon — try the bundled resources path first, fall back to build/
@@ -172,8 +204,14 @@ ipcMain.handle('make-browser-request', (_event, { url, blockSignatures }) => {
 
     const win = new BrowserWindow({
       show: false,
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
+      width: 1280, height: 720,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        autoplayPolicy: 'no-user-gesture-required',
+      },
     });
+    if (previewMode) makePreview(win);
 
     let resolved = false;
     const done = (result) => {
@@ -238,6 +276,7 @@ ipcMain.handle('make-stream-request', (_event, { url, duration, blockSignatures 
         backgroundThrottling: false,                 // keep playback active while hidden
       },
     });
+    if (previewMode) makePreview(win);
 
     // Count real bytes crossing the network. content-length covers most
     // assets; chunked streaming (HLS/DASH) falls back to a small per-chunk
