@@ -1,14 +1,14 @@
 {
   "name": "stg-sase-traffic-generator",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "SASE Traffic Generator for FortiSASE and other SASE solution demos",
   "main": "main.js",
   "scripts": {
     "start":             "node generate-version.js && electron .",
     "genver":            "node generate-version.js",
-    "build:linux-x64":   "node generate-version.js && electron-builder --linux AppImage --x64",
-    "build:linux-arm64": "node generate-version.js && electron-builder --linux AppImage --arm64",
-    "build:linux":       "node generate-version.js && electron-builder --linux AppImage --x64 --arm64",
+    "build:linux-x64":   "node generate-version.js && electron-builder --linux --x64",
+    "build:linux-arm64": "node generate-version.js && electron-builder --linux --arm64",
+    "build:linux":       "node generate-version.js && electron-builder --linux --x64 --arm64",
     "build:win":         "node generate-version.js && electron-builder --win portable --x64",
     "build:mac-arm64":   "node generate-version.js && electron-builder --mac --arm64",
     "build:mac-x64":     "node generate-version.js && electron-builder --mac --x64",
@@ -35,10 +35,15 @@
       { "from": "build/icon.png", "to": "icon.png" }
     ],
     "linux": {
-      "target": "AppImage",
+      "target": [
+        { "target": "deb",      "arch": ["arm64", "x64"] },
+        { "target": "AppImage", "arch": ["arm64", "x64"] }
+      ],
       "category": "Network",
-      "maintainer": "STG",
-      "icon": "build/icons"
+      "maintainer": "Chris Stratford <chris.stratford@vocus.com.au>",
+      "icon": "build/icons",
+      "synopsis": "SASE Traffic Generator — categorised traffic generator for FortiSASE demos",
+      "description": "STG generates realistic categorised web traffic through a running SASE agent to demonstrate URL filtering, threat detection, and reporting."
     },
     "win": {
       "target": [

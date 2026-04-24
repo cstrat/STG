@@ -1,10 +1,29 @@
 # STG — SASE Traffic Generator
 
-**Current version: 1.2.2**
+**Current version: 1.2.3**
 
 A traffic simulation tool for FortiSASE (and other SASE vendor) demo environments. Generates realistic categorised web traffic through a running SASE agent to demonstrate URL filtering, threat detection, and reporting.
 
-The build fingerprint (`v1.2.2 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
+The build fingerprint (`v1.2.3 · <git-hash>`) is shown in the top bar of the app so reports and bug-reports can be tied back to a specific build.
+
+## Installing on a Debian/Ubuntu VM (preferred)
+
+Download the `.deb` for your architecture from the [latest release](https://github.com/cstrat/STG/releases/latest) and install with apt — this handles all dependencies, puts STG in your app menu, and requires no launcher script:
+
+```bash
+sudo apt install ./STG_1.2.3_arm64.deb     # or _amd64.deb on x86-64 VMs
+```
+
+Launch it from the app menu, or `stg-sase-traffic-generator` from a terminal.
+
+## Installing on other Linux distros
+
+Fall back to the `.AppImage`:
+
+```bash
+chmod +x STG-1.2.3-arm64.AppImage
+./STG-1.2.3-arm64.AppImage
+```
 
 ---
 
