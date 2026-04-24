@@ -215,6 +215,94 @@ ipcMain.handle('make-browser-request', (_event, { url, blockSignatures }) => {
   });
 });
 
+// ─── Stream Request (video mode) ──────────────────────────────────────────────
+// Hidden BrowserWindow that stays alive for `duration` seconds so videos on
+// YouTube / Vimeo / etc. actually buffer and play, generating real streaming
+// traffic. Byte totals come from session.webRequest instead of a single GET.
+
+ipcMain.handle('make-stream-request', (_event, { url, duration, blockSignatures }) => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const fullUrl   = url.startsWith('http') ? url : `https://${url}`;
+    const sigs      = blockSignatures || ['FortiGuard', 'Web Page Blocked', 'fortinet'];
+    const streamMs  = Math.max(3, Math.min(120, duration || 15)) * 1000;
+
+    const win = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 720,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        autoplayPolicy: 'no-user-gesture-required',  // let video auto-play
+        backgroundThrottling: false,                 // keep playback active while hidden
+      },
+    });
+
+    // Count real bytes crossing the network. content-length covers most
+    // assets; chunked streaming (HLS/DASH) falls back to a small per-chunk
+    // estimate since the header isn't sent.
+    let rxBytes  = 0;
+    let txBytes  = 0;
+    let requests = 0;
+
+    const webReq = win.webContents.session.webRequest;
+    webReq.onSendHeaders({ urls: ['*://*/*'] }, (details) => {
+      requests++;
+      const hdrs = details.requestHeaders || {};
+      txBytes += Object.entries(hdrs).reduce((s, [k, v]) => s + k.length + String(v).length + 4, 0) + (details.url || '').length + 50;
+    });
+    webReq.onCompleted({ urls: ['*://*/*'] }, (details) => {
+      if (details.fromCache) return;
+      const hdrs = details.responseHeaders || {};
+      const cl   = hdrs['content-length'] || hdrs['Content-Length'];
+      const size = cl ? parseInt(Array.isArray(cl) ? cl[0] : cl, 10) : NaN;
+      rxBytes += Number.isFinite(size) ? size : 8000;  // fallback estimate per response
+    });
+
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      try { win.destroy(); } catch (_) {}
+      resolve(result);
+    };
+
+    // Hard upper bound in case the page never fires did-finish-load
+    const hardTimer = setTimeout(() => {
+      done({ status: 0, statusText: 'Stream timeout', txBytes, rxBytes, time: Date.now() - startTime, blocked: false, challenge: false, error: 'Page never finished loading' });
+    }, streamMs + 15000);
+
+    win.webContents.once('did-finish-load', () => {
+      const loadTime  = Date.now() - startTime;
+      const remaining = Math.max(1000, streamMs - loadTime);
+      // Hold the window open so video can buffer/play, then classify the result.
+      setTimeout(async () => {
+        let bodyText = '';
+        try {
+          bodyText = await win.webContents.executeJavaScript('document.body ? document.body.innerText.substring(0, 3000) : ""');
+        } catch (_) {}
+        const finalUrl = win.webContents.getURL();
+        const cls = classifyResponse({ status: 200, bodySnippet: bodyText, finalUrl, sigs });
+        clearTimeout(hardTimer);
+        done({ status: 200, statusText: 'OK', txBytes, rxBytes, time: Date.now() - startTime, ...cls });
+      }, remaining);
+    });
+
+    win.webContents.on('did-fail-load', (_e, code, desc, _u, isMainFrame) => {
+      if (!isMainFrame) return;
+      clearTimeout(hardTimer);
+      const likelyBlock = Math.abs(code) === 20 || Math.abs(code) === 6;
+      done({ status: code, statusText: desc, txBytes, rxBytes, time: Date.now() - startTime, blocked: likelyBlock, challenge: false, error: desc });
+    });
+
+    win.loadURL(fullUrl).catch(e => {
+      clearTimeout(hardTimer);
+      done({ status: 0, statusText: e.message, txBytes, rxBytes, time: Date.now() - startTime, blocked: false, challenge: false, error: e.message });
+    });
+  });
+});
+
 // ─── Port Scan ────────────────────────────────────────────────────────────────
 
 ipcMain.handle('port-scan', (_event, { host, ports }) => {

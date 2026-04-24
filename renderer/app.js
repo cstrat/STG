@@ -56,9 +56,19 @@
       video: {
         id: 'video', label: 'VIDEO STREAMING', short: 'VIDEO',
         color: 'var(--cat-video)', cssVar: '--cat-video',
-        enabled: true, speed: 'slow', mode: 'http',
+        enabled: true, speed: 'slow', mode: 'stream', streamDuration: 15,
         urls: [
-          'www.youtube.com/', 'www.netflix.com/', 'www.twitch.tv/', 'vimeo.com/',
+          // YouTube — autoplay embed URLs, muted so autoplay isn't blocked.
+          // youtube-nocookie.com lets the embed load without a consent wall.
+          'www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1',  // Rickroll
+          'www.youtube-nocookie.com/embed/9bZkp7q19f0?autoplay=1&mute=1',  // Gangnam Style
+          'www.youtube-nocookie.com/embed/kJQP7kiw5Fk?autoplay=1&mute=1',  // Despacito
+          'www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&mute=1',  // First ever YouTube video
+          // Vimeo — autoplay embed
+          'player.vimeo.com/video/76979871?autoplay=1&muted=1',
+          'player.vimeo.com/video/347119375?autoplay=1&muted=1',
+          // Streaming service landing pages (still classified as Video Streaming by SASE)
+          'www.youtube.com/', 'www.twitch.tv/', 'www.netflix.com/',
           '9now.nine.com.au/', '7plus.com.au/', 'www.binge.com.au/',
           'www.disneyplus.com/', 'www.primevideo.com/', 'www.stan.com.au/',
         ],
@@ -487,9 +497,15 @@
     }
 
     const txBytes = Math.floor(Math.random() * 800) + 80;
-    const rxBytes = outcome === 'ok'
-      ? Math.floor(Math.random() * 200000) + 5000
-      : Math.floor(Math.random() * 8000) + 1000;
+    // Stream-mode successes move a lot more data since the window holds open
+    let rxBytes;
+    if (outcome === 'ok' && mode === 'stream') {
+      rxBytes = Math.floor(Math.random() * 4_000_000) + 2_000_000;   // ~2–6 MB
+    } else if (outcome === 'ok') {
+      rxBytes = Math.floor(Math.random() * 200000) + 5000;
+    } else {
+      rxBytes = Math.floor(Math.random() * 8000) + 1000;
+    }
 
     return { url, mode, outcome, code, response, txBytes, rxBytes };
   }
@@ -504,7 +520,9 @@
     const { timeout, blockSignatures } = state.config.settings;
 
     let result;
-    if (mode === 'browser') {
+    if (mode === 'stream') {
+      result = await window.electronAPI.makeStreamRequest({ url, duration: cat.streamDuration || 15, blockSignatures });
+    } else if (mode === 'browser') {
       result = await window.electronAPI.makeBrowserRequest({ url, blockSignatures });
     } else {
       result = await window.electronAPI.makeHttpRequest({ url, timeout, blockSignatures });
@@ -906,7 +924,7 @@
       const modeGroup = document.createElement('div');
       modeGroup.className = 'cfg-speed-group';
       modeGroup.style.marginLeft = '8px';
-      [['http','HTTP'], ['browser','BROWSER'], ['mixed','MIX']].forEach(([val, label]) => {
+      [['http','HTTP'], ['browser','BROWSER'], ['mixed','MIX'], ['stream','STRM']].forEach(([val, label]) => {
         const btn = document.createElement('button');
         btn.className = 'cfg-mode-btn';
         btn.textContent = label;
